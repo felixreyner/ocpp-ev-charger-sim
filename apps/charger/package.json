@@ -1,0 +1,22 @@
+{
+  "name": "@sim/charger",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n server,web -c cyan,magenta \"tsx watch server/index.ts\" \"vite --config web/vite.config.ts\"",
+    "build": "vite build --config web/vite.config.ts",
+    "start": "tsx server/index.ts"
+  },
+  "dependencies": {
+    "@sim/ocpp": "*",
+    "@sim/ui": "*",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.0",
+    "vite": "^7.0.0"
+  }
+}

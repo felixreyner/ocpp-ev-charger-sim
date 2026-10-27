@@ -1,0 +1,14 @@
+{
+  "name": "@sim/ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@sim/ocpp": "*"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0"
+  }
+}
