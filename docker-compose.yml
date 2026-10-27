@@ -1,0 +1,31 @@
+services:
+  csms:
+    build:
+      context: .
+      args:
+        APP: csms
+    container_name: ocpp-csms
+    environment:
+      PORT: 8080
+      OCPP_PORT: 9000
+    ports:
+      - "8080:8080" # CSMS dashboard
+      - "9000:9000" # OCPP WebSocket endpoint, open to real chargers / other simulators
+    restart: unless-stopped
+
+  charger:
+    build:
+      context: .
+      args:
+        APP: charger
+    container_name: ocpp-charger
+    environment:
+      PORT: 8081
+      CSMS_URL: ws://csms:9000/ocpp
+      CHARGE_POINT_ID: CP-001
+      OCPP_VERSION: ocpp1.6 # or ocpp2.0.1 (you can also switch live in the GUI)
+    ports:
+      - "8081:8081" # charger GUI
+    depends_on:
+      - csms
+    restart: unless-stopped

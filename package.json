@@ -1,0 +1,28 @@
+{
+  "name": "ocpp-ev-charger-sim",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Learn OCPP by watching a simulated EV charger talk to a simulated central system (CSMS). Supports OCPP 1.6J and 2.0.1.",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n csms,charger -c magenta,cyan \"npm:dev:csms\" \"npm:dev:charger\"",
+    "dev:csms": "npm run dev -w @sim/csms",
+    "dev:charger": "npm run dev -w @sim/charger",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test tests/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/ws": "^8.5.13",
+    "concurrently": "^9.1.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.0"
+  }
+}
