@@ -29,3 +29,30 @@ services:
     depends_on:
       - csms
     restart: unless-stopped
+
+  # ⚠ Rogue / faulty charger. Deliberately misbehaves toward the CSMS to
+  # exercise its robustness (malformed frames, floods, bogus meter values,
+  # replays, oversized payloads, invalid transactions, …). This is a test
+  # node for your own local CSMS sandbox — its GUI is clearly labelled and it
+  # registers as "ROGUE-666" on the dashboard.
+  rogue:
+    build:
+      context: .
+      args:
+        APP: rogue
+    container_name: ocpp-rogue
+    environment:
+      PORT: 8082
+      CSMS_URL: ws://csms:9000/ocpp
+      CHARGE_POINT_ID: ROGUE-666
+      OCPP_VERSION: ocpp1.6 # or ocpp2.0.1
+      ROGUE_ARMED: "true" # start misbehaving on boot (toggle live in the GUI)
+      ROGUE_INTENSITY: "1" # 1..8, scales how fast attacks fire
+      # ROGUE_ATTACKS: comma list of modes, or "all" / "none". Unset = a broad
+      # default (everything except the noisiest flood / reconnect-storm modes):
+      #   malformed,bogusMeter,flood,reconnectStorm,replay,oversized,wrongType,invalidTx,ignoreCommands
+    ports:
+      - "8082:8082" # rogue charger GUI
+    depends_on:
+      - csms
+    restart: unless-stopped

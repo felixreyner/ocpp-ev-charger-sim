@@ -21,6 +21,7 @@ docker compose up --build
 | --- | --- |
 | Charger GUI | http://localhost:8081 |
 | CSMS dashboard | http://localhost:8080 |
+| ☠️ Rogue charger GUI | http://localhost:8082 |
 | **CSMS OCPP endpoint (published)** | `ws://<your-machine>:9000/ocpp/<chargePointId>` |
 
 Port **9000** is published on the host. That means anything on your network can connect to the CSMS: a real charger, another simulator, or your own code. Use subprotocol `ocpp1.6` or `ocpp2.0.1`.
@@ -44,6 +45,38 @@ npm run dev         # CSMS on :5173 (backend :8080, OCPP :9000), charger on :517
 8. **Speed up time.** Use ×60 or ×300 sim speed to watch the DC charging curve taper above 80 % SoC.
 
 The charger GUI has a **Guided session** checklist that ticks itself off as the matching messages appear.
+
+## ☠️ Rogue charger (robustness testing)
+
+The stack also includes a **rogue / faulty charger** — a deliberately misbehaving OCPP node whose only job is to stress-test the CSMS's robustness. It connects to the same published endpoint as any other charger, registers on the dashboard as **`ROGUE-666`** (vendor `ROGUE-TESTNODE`, model `DoNotTrust 666`), and its own GUI at **http://localhost:8082** is painted red so it's never mistaken for the real charger.
+
+> This is a local testing tool aimed at *your own* CSMS sandbox. It makes a well-behaved server's error handling visible — watch the CSMS answer junk with `FormationViolation` / `ProtocolError` instead of falling over.
+
+Each misbehaviour is an independently toggleable **attack mode** (buttons in the GUI, or the `ROGUE_ATTACKS` env var). There's a master **Arm / Disarm** switch, a **×1–×8 intensity** dial, and a live log of every frame it fires plus the CSMS's reply.
+
+| Mode | What the CSMS sees |
+| --- | --- |
+| `malformed` | Non-JSON junk, wrong array shapes, missing fields, bad field types |
+| `bogusMeter` | Impossible meter values — negative energy, terawatt readings, counters running backwards |
+| `flood` | Rapid-fire Heartbeat / StatusNotification bursts |
+| `reconnectStorm` | Opens and slams the WebSocket shut every couple of seconds |
+| `replay` | Re-used old messageIds and CALLRESULTs for requests that were never made |
+| `oversized` | Several-hundred-kilobyte string fields |
+| `wrongType` | Frames with unknown message-type numbers and stray CALLERRORs |
+| `invalidTx` | MeterValues / StopTransaction for transactions that never started |
+| `ignoreCommands` | Never answers Reset / remote commands; keeps many CALLs in flight at once |
+
+### Configuration
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `CHARGE_POINT_ID` | `ROGUE-666` | How it appears on the dashboard |
+| `OCPP_VERSION` | `ocpp1.6` | `ocpp1.6` or `ocpp2.0.1` |
+| `ROGUE_ARMED` | `true` | Start misbehaving on boot (toggle live in the GUI) |
+| `ROGUE_INTENSITY` | `1` | `1`–`8`, scales how fast attacks fire |
+| `ROGUE_ATTACKS` | *(a broad default)* | Comma list of modes, or `all` / `none`. Unset = everything except the noisiest `flood` and `reconnectStorm` |
+
+To leave it out of a run entirely: `docker compose up --build csms charger`.
 
 ## OCPP in five minutes
 
@@ -108,6 +141,8 @@ apps/
              web/              = charger GUI
   csms/      server/central.ts = the CSMS (authorization list, transactions, remote commands)
              web/              = CSMS dashboard
+  rogue/     server/rogue.ts   = the rogue charger (configurable misbehaviours, raw frame sender)
+             web/              = rogue control GUI
 tests/       end-to-end charging session over both protocol versions
 ```
 
