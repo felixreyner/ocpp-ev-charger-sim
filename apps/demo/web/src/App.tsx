@@ -440,6 +440,63 @@ function Waiting({ what }: { what: string }) {
   );
 }
 
+function RogueTarget({ s, act }: { s: RogueState; act: (a: RogueAction) => void }) {
+  const current = s.config.csmsUrl;
+  const [draft, setDraft] = useState(current);
+  const [editing, setEditing] = useState(false);
+  useEffect(() => {
+    if (!editing) setDraft(current);
+  }, [current, editing]);
+
+  const trimmed = draft.trim();
+  const valid = /^wss?:\/\/.+/i.test(trimmed);
+  const dirty = trimmed !== current;
+  const apply = () => {
+    if (!valid || !dirty) return;
+    act({ type: 'setTarget', csmsUrl: trimmed });
+    setEditing(false);
+  };
+
+  return (
+    <div className="rc-target">
+      <span className="rc-label">🎯 Target</span>
+      <input
+        className={`rc-target-input mono ${!valid && trimmed ? 'invalid' : ''}`}
+        value={draft}
+        spellCheck={false}
+        placeholder="ws://host:9000/ocpp"
+        onFocus={() => setEditing(true)}
+        onChange={(e) => {
+          setEditing(true);
+          setDraft(e.target.value);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') apply();
+          if (e.key === 'Escape') {
+            setDraft(current);
+            setEditing(false);
+          }
+        }}
+      />
+      <button className="chip-btn" disabled={!valid || !dirty} onClick={apply} title="Reconnect to this CSMS">
+        set
+      </button>
+      {current !== s.defaultCsmsUrl && (
+        <button
+          className="chip-btn"
+          title={`Reset to default (${s.defaultCsmsUrl})`}
+          onClick={() => {
+            setEditing(false);
+            act({ type: 'setTarget', csmsUrl: s.defaultCsmsUrl });
+          }}
+        >
+          reset
+        </button>
+      )}
+    </div>
+  );
+}
+
 function RogueCard({ s, act, flash }: { s: RogueState; act: (a: RogueAction) => void; flash: boolean }) {
   const enabled = ATTACKS.filter((a) => s.attacks[a.id]).length;
   const c = s.connection;
@@ -464,6 +521,8 @@ function RogueCard({ s, act, flash }: { s: RogueState; act: (a: RogueAction) => 
           )}
         </div>
       </div>
+
+      <RogueTarget s={s} act={act} />
 
       <div className="rc-stats">
         <div>

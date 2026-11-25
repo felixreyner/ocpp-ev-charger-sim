@@ -40,10 +40,14 @@ export class RogueCharger extends EventEmitter {
   config: RogueConfig;
   armed: boolean;
   logs: LogEntry[] = [];
+  /** The CSMS URL the node was created with — used for "reset to default". */
+  readonly defaultCsmsUrl: string;
 
   private attacks: AttackFlags;
   private ws: WebSocket | null = null;
   private wantConnected = true;
+  /** When set, the next close reconnects immediately (used when retargeting). */
+  private forceReconnect = false;
   private connState: RogueState['connection'] = {
     state: 'disconnected',
     connectedAt: null,
@@ -70,6 +74,7 @@ export class RogueCharger extends EventEmitter {
   constructor(config: RogueConfig, attacks: AttackFlags, armed: boolean) {
     super();
     this.config = config;
+    this.defaultCsmsUrl = config.csmsUrl;
     this.attacks = attacks;
     this.armed = armed;
   }
@@ -129,7 +134,8 @@ export class RogueCharger extends EventEmitter {
       this.connState = { ...this.connState, state: 'disconnected', connectedAt: null };
       this.emitState();
       if (this.wantConnected) {
-        const delay = this.armed && this.attacks.reconnectStorm ? STORM_DELAY_MS : RECONNECT_DELAY_MS;
+        const delay = this.forceReconnect ? 0 : this.armed && this.attacks.reconnectStorm ? STORM_DELAY_MS : RECONNECT_DELAY_MS;
+        this.forceReconnect = false;
         this.reconnectTimer = setTimeout(() => this.openSocket(), delay);
       }
     });
@@ -159,6 +165,46 @@ export class RogueCharger extends EventEmitter {
   setIntensity(value: number) {
     this.config.intensity = Math.min(8, Math.max(1, value || 1));
     this.rescheduleAttacks();
+    this.emitState();
+  }
+
+  /**
+   * Point the rogue node at a different CSMS/OCPP WebSocket URL and reconnect
+   * there straight away. Rejects anything that isn't a ws:// or wss:// URL.
+   */
+  setTarget(csmsUrl: string) {
+    const next = (csmsUrl ?? '').trim();
+    let parsed: URL;
+    try {
+      parsed = new URL(next);
+    } catch {
+      this.toast('error', `Invalid target URL: ${next || '(empty)'}`);
+      return;
+    }
+    if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') {
+      this.toast('error', `Target must be a ws:// or wss:// URL (got ${parsed.protocol}//)`);
+      return;
+    }
+    if (next === this.config.csmsUrl) {
+      this.toast('info', 'Target unchanged');
+      return;
+    }
+
+    this.config.csmsUrl = next;
+    this.toast('info', `Target CSMS → ${next}`);
+
+    if (this.ws) {
+      // Drop the live socket; the close handler reconnects immediately (force).
+      this.forceReconnect = true;
+      this.ws.close(1000, 'Retargeting CSMS');
+    } else if (this.wantConnected) {
+      // We were mid-backoff with no socket: jump straight to the new target.
+      if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+      this.openSocket();
+    }
+    // If the user had manually disconnected, just remember the new target; it
+    // takes effect when they press Connect.
     this.emitState();
   }
 
@@ -398,6 +444,7 @@ export class RogueCharger extends EventEmitter {
   state(): RogueState {
     return {
       config: this.config,
+      defaultCsmsUrl: this.defaultCsmsUrl,
       connection: this.connState,
       armed: this.armed,
       attacks: this.attacks,
