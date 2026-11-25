@@ -448,6 +448,38 @@ pre {
   padding: 0 8px 8px;
   min-height: 160px;
   position: relative;
+  /* Newest rows are prepended; we keep the reader's place ourselves. */
+  overflow-anchor: none;
+}
+.seq-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.seq-new {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 22%, var(--panel-solid));
+  color: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.35);
+  animation: seq-new-in 180ms ease-out;
+}
+@keyframes seq-new-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -6px);
+  }
 }
 .seq-row {
   display: grid;
