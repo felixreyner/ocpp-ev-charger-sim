@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { describeAction, versionLabel, type LogEntry } from '@sim/ocpp';
 import { JsonView } from './JsonView.tsx';
 import { clock } from './format.ts';
@@ -14,9 +14,13 @@ interface Props {
 const isFromCharger = (e: LogEntry, perspective: Props['perspective']) =>
   perspective === 'charger' ? e.dir === 'out' : e.dir === 'in';
 
+/** How close to the top (px) still counts as "following" the newest entries. */
+const TOP_SLACK = 40;
+
 /**
  * The live OCPP message log, drawn as a sequence diagram: the charger on the
- * left, the CSMS on the right, one arrow per WebSocket frame.
+ * left, the CSMS on the right, one arrow per WebSocket frame. Newest frames are
+ * shown first (on top).
  */
 export function MessageInspector({ logs, perspective, onClear, title = 'OCPP message flow' }: Props) {
   const [filter, setFilter] = useState('');
@@ -24,22 +28,70 @@ export function MessageInspector({ logs, perspective, onClear, title = 'OCPP mes
   const [paused, setPaused] = useState<LogEntry[] | null>(null);
   const [selected, setSelected] = useState<LogEntry | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const stick = useRef(true);
+  /** True while the user is at the top, i.e. following the newest entries. */
+  const atTop = useRef(true);
+  /** The row the user was looking at, so prepending new rows doesn't move it. */
+  const anchor = useRef<{ seq: number; offset: number } | null>(null);
+  const [unseen, setUnseen] = useState(0);
 
   const source = paused ?? logs;
   const visible = useMemo(() => {
     const f = filter.trim().toLowerCase();
-    return source.filter((e) => {
-      if (hideHeartbeat && e.action === 'Heartbeat') return false;
-      if (!f) return true;
-      return e.action.toLowerCase().includes(f) || e.raw.toLowerCase().includes(f) || (e.peer ?? '').toLowerCase().includes(f);
-    });
+    const out: LogEntry[] = [];
+    // Walk backwards so the newest entry comes first.
+    for (let i = source.length - 1; i >= 0; i--) {
+      const e = source[i]!;
+      if (hideHeartbeat && e.action === 'Heartbeat') continue;
+      if (f && !(e.action.toLowerCase().includes(f) || e.raw.toLowerCase().includes(f) || (e.peer ?? '').toLowerCase().includes(f))) continue;
+      out.push(e);
+    }
+    return out;
   }, [source, filter, hideHeartbeat]);
 
-  useEffect(() => {
+  const newestSeq = visible[0]?.seq;
+  const lastNewest = useRef(newestSeq);
+
+  /** Remember the first row in view and where it sits, to restore after new rows are prepended. */
+  const captureAnchor = () => {
     const el = listRef.current;
-    if (el && stick.current) el.scrollTop = el.scrollHeight;
-  }, [visible.length]);
+    if (!el) return;
+    const rows = el.querySelectorAll<HTMLElement>('[data-seq]');
+    for (const row of rows) {
+      if (row.offsetTop + row.offsetHeight > el.scrollTop) {
+        anchor.current = { seq: Number(row.dataset.seq), offset: row.offsetTop - el.scrollTop };
+        return;
+      }
+    }
+    anchor.current = null;
+  };
+
+  // New entries land on top. If the user is reading further down, keep the rows
+  // they are looking at still instead of letting them get pushed away.
+  useLayoutEffect(() => {
+    const el = listRef.current;
+    const prevNewest = lastNewest.current;
+    lastNewest.current = newestSeq;
+    if (!el) return;
+    if (atTop.current) {
+      el.scrollTop = 0;
+      setUnseen(0);
+      return;
+    }
+    const a = anchor.current;
+    const row = a && el.querySelector<HTMLElement>(`[data-seq="${a.seq}"]`);
+    if (a && row) el.scrollTop = row.offsetTop - a.offset;
+    if (prevNewest !== undefined && newestSeq !== undefined && newestSeq !== prevNewest) {
+      const added = visible.findIndex((e) => e.seq === prevNewest);
+      setUnseen((n) => n + (added < 0 ? 1 : added));
+    }
+  }, [visible, newestSeq]);
+
+  const jumpToNewest = () => {
+    const el = listRef.current;
+    if (el) el.scrollTo({ top: 0, behavior: 'smooth' });
+    atTop.current = true;
+    setUnseen(0);
+  };
 
   const pair = selected ? logs.find((e) => e.messageId === selected.messageId && e.seq !== selected.seq) : undefined;
   const request = selected?.kind === 'CALL' ? selected : pair?.kind === 'CALL' ? pair : undefined;
@@ -73,38 +125,47 @@ export function MessageInspector({ logs, perspective, onClear, title = 'OCPP mes
         <span className="lane-label right">CSMS 🛰</span>
       </div>
 
-      <div
-        className="seq-list"
-        ref={listRef}
-        onScroll={(e) => {
-          const el = e.currentTarget;
-          stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-        }}
-      >
-        {visible.length === 0 && <div className="empty">No messages yet. Things you do will show up here as arrows.</div>}
-        {visible.map((e) => {
-          const right = isFromCharger(e, perspective);
-          return (
-            <button
-              key={e.seq}
-              className={`seq-row k-${e.kind} ${selected?.seq === e.seq ? 'sel' : ''} ${selected && pair?.seq === e.seq ? 'paired' : ''}`}
-              onClick={() => setSelected(e)}
-            >
-              <span className="seq-time">{clock(e.ts)}</span>
-              <span className={`seq-track ${right ? 'to-right' : 'to-left'}`}>
-                <span className="seq-line" />
-                <span className="seq-label">
-                  <b>{e.action}</b>
-                  <em className={`kind kind-${e.kind}`}>{e.kind === 'CALL' ? 'req' : e.kind === 'CALLRESULT' ? 'res' : e.errorCode}</em>
+      <div className="seq-wrap">
+        {unseen > 0 && (
+          <button className="seq-new" onClick={jumpToNewest}>
+            ↑ {unseen} new {unseen === 1 ? 'message' : 'messages'}
+          </button>
+        )}
+        <div
+          className="seq-list"
+          ref={listRef}
+          onScroll={(e) => {
+            atTop.current = e.currentTarget.scrollTop < TOP_SLACK;
+            if (atTop.current) setUnseen(0);
+            captureAnchor();
+          }}
+        >
+          {visible.length === 0 && <div className="empty">No messages yet. Things you do will show up here as arrows.</div>}
+          {visible.map((e) => {
+            const right = isFromCharger(e, perspective);
+            return (
+              <button
+                key={e.seq}
+                data-seq={e.seq}
+                className={`seq-row k-${e.kind} ${selected?.seq === e.seq ? 'sel' : ''} ${selected && pair?.seq === e.seq ? 'paired' : ''}`}
+                onClick={() => setSelected(e)}
+              >
+                <span className="seq-time">{clock(e.ts)}</span>
+                <span className={`seq-track ${right ? 'to-right' : 'to-left'}`}>
+                  <span className="seq-line" />
+                  <span className="seq-label">
+                    <b>{e.action}</b>
+                    <em className={`kind kind-${e.kind}`}>{e.kind === 'CALL' ? 'req' : e.kind === 'CALLRESULT' ? 'res' : e.errorCode}</em>
+                  </span>
                 </span>
-              </span>
-              <span className="seq-meta">
-                {e.latencyMs !== undefined && e.kind !== 'CALL' ? `${e.latencyMs}ms` : ''}
-                {perspective === 'csms' && e.peer ? <i className="peer">{e.peer}</i> : null}
-              </span>
-            </button>
-          );
-        })}
+                <span className="seq-meta">
+                  {e.latencyMs !== undefined && e.kind !== 'CALL' ? `${e.latencyMs}ms` : ''}
+                  {perspective === 'csms' && e.peer ? <i className="peer">{e.peer}</i> : null}
+                </span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {selected && (
@@ -129,7 +190,10 @@ export function MessageInspector({ logs, perspective, onClear, title = 'OCPP mes
           <div className="detail-grid">
             <div>
               <div className="detail-sub">
-                Request <code>[2, "{request?.messageId ?? selected.messageId}", "{selected.action}", …]</code>
+                Request{' '}
+                <code>
+                  [2, "{request?.messageId ?? selected.messageId}", "{selected.action}", …]
+                </code>
               </div>
               {request ? <JsonView value={request.payload} /> : <div className="muted small">not in log</div>}
             </div>
@@ -137,7 +201,10 @@ export function MessageInspector({ logs, perspective, onClear, title = 'OCPP mes
               <div className="detail-sub">
                 {response?.kind === 'CALLERROR' ? (
                   <>
-                    Error <code>[4, …, "{response.errorCode}", "{response.errorDescription}", …]</code>
+                    Error{' '}
+                    <code>
+                      [4, …, "{response.errorCode}", "{response.errorDescription}", …]
+                    </code>
                   </>
                 ) : (
                   <>
