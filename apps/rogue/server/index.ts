@@ -118,6 +118,8 @@ wss.on('connection', (ws) => {
         return rogue.setAll(a.on);
       case 'intensity':
         return rogue.setIntensity(a.value);
+      case 'setTarget':
+        return rogue.setTarget(a.csmsUrl);
       case 'connect':
         return rogue.connect();
       case 'disconnect':

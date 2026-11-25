@@ -99,6 +99,8 @@ export interface RogueState {
     socketOpens: number;
     error: string | null;
   };
+  /** The CSMS URL the node booted with (from CSMS_URL), for "reset to default". */
+  defaultCsmsUrl: string;
   /** Master switch: when off, the node sits connected but behaves. */
   armed: boolean;
   attacks: AttackFlags;
@@ -116,6 +118,7 @@ export type RogueAction =
   | { type: 'toggle'; attack: AttackId; on: boolean }
   | { type: 'all'; on: boolean }
   | { type: 'intensity'; value: number }
+  | { type: 'setTarget'; csmsUrl: string }
   | { type: 'connect' }
   | { type: 'disconnect' }
   | { type: 'burst'; attack: AttackId };

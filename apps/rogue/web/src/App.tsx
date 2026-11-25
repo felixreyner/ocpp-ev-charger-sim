@@ -4,6 +4,75 @@ import { ATTACKS, type AttackId, type RogueAction, type RogueState } from '../..
 
 const INTENSITIES = [1, 2, 4, 8];
 
+const isWsUrl = (v: string) => /^wss?:\/\/.+/i.test(v.trim());
+
+function TargetEditor({ s, act }: { s: RogueState; act: (a: RogueAction) => void }) {
+  const current = s.config.csmsUrl;
+  const [draft, setDraft] = useState(current);
+  const [editing, setEditing] = useState(false);
+  // Follow server-side changes (e.g. edits from the unified dashboard) unless
+  // the user is in the middle of typing their own value.
+  useEffect(() => {
+    if (!editing) setDraft(current);
+  }, [current, editing]);
+
+  const trimmed = draft.trim();
+  const valid = isWsUrl(trimmed);
+  const dirty = trimmed !== current;
+  const apply = () => {
+    if (!valid || !dirty) return;
+    act({ type: 'setTarget', csmsUrl: trimmed });
+    setEditing(false);
+  };
+
+  return (
+    <div className="target-edit">
+      <label className="target-label muted small">OCPP WebSocket endpoint</label>
+      <div className="target-input-row">
+        <input
+          className={`target-input mono ${!valid && trimmed ? 'invalid' : ''}`}
+          value={draft}
+          spellCheck={false}
+          placeholder="ws://host:9000/ocpp"
+          onFocus={() => setEditing(true)}
+          onChange={(e) => {
+            setEditing(true);
+            setDraft(e.target.value);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') apply();
+            if (e.key === 'Escape') {
+              setDraft(current);
+              setEditing(false);
+            }
+          }}
+        />
+        <button className="btn btn-sm btn-primary" disabled={!valid || !dirty} onClick={apply}>
+          Retarget
+        </button>
+      </div>
+      <div className="target-sub">
+        <span className="muted small">
+          Node connects as <code className="mono">{s.config.chargePointId}</code> → <code className="mono">{(dirty && valid ? trimmed : current).replace(/\/+$/, '')}/{s.config.chargePointId}</code>
+        </span>
+        {!valid && trimmed && <span className="err small">Must start with ws:// or wss://</span>}
+        {dirty && valid && <span className="warn small">Press Retarget to reconnect here.</span>}
+        {current !== s.defaultCsmsUrl && (
+          <button
+            className="btn btn-xs"
+            onClick={() => {
+              setEditing(false);
+              act({ type: 'setTarget', csmsUrl: s.defaultCsmsUrl });
+            }}
+          >
+            Reset to default ({s.defaultCsmsUrl})
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ConnBadge({ s }: { s: RogueState }) {
   const c = s.connection;
   const tone = c.state === 'connected' ? 'ok' : c.state === 'connecting' ? 'warn' : 'bad';
@@ -100,11 +169,8 @@ export function App() {
               <ConnBadge s={s} />
             </header>
             <div className="panel-body">
+              <TargetEditor s={s} act={act} />
               <div className="kv">
-                <span>Endpoint</span>
-                <code>
-                  {s.config.csmsUrl.replace(/\/+$/, '')}/{s.config.chargePointId}
-                </code>
                 <span>Identity</span>
                 <code>{s.config.chargePointId}</code>
                 <span>Subprotocol</span>
