@@ -9,9 +9,11 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "concurrently -k -n csms,charger -c magenta,cyan \"npm:dev:csms\" \"npm:dev:charger\"",
+    "dev": "concurrently -k -n csms,charger,rogue,demo -c magenta,cyan,red,yellow \"npm:dev:csms\" \"npm:dev:charger\" \"npm:dev:rogue\" \"npm:dev:demo\"",
     "dev:csms": "npm run dev -w @sim/csms",
     "dev:charger": "npm run dev -w @sim/charger",
+    "dev:rogue": "npm run dev -w @sim/rogue",
+    "dev:demo": "npm run dev -w @sim/demo",
     "build": "npm run build --workspaces --if-present",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test tests/*.test.ts"

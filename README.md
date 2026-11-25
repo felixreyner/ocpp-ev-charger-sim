@@ -19,6 +19,7 @@ docker compose up --build
 
 | What | URL |
 | --- | --- |
+| 🎬 **Unified demo dashboard** (all three in one tab) | http://localhost:8083 |
 | Charger GUI | http://localhost:8081 |
 | CSMS dashboard | http://localhost:8080 |
 | ☠️ Rogue charger GUI | http://localhost:8082 |
@@ -30,8 +31,21 @@ Port **9000** is published on the host. That means anything on your network can 
 
 ```bash
 npm install
-npm run dev         # CSMS on :5173 (backend :8080, OCPP :9000), charger on :5174 (backend :8081)
+npm run dev         # CSMS on :5173 (backend :8080, OCPP :9000), charger on :5174 (backend :8081),
+                    # rogue on :5175 (backend :8082), demo dashboard on :5176 (backend :8083)
 ```
+
+## 🎬 Demo dashboard
+
+![Unified demo dashboard](docs/demo.png)
+
+**http://localhost:8083** drives the CSMS, the charger and the rogue charger from one browser tab, so a live demo never has to switch tabs.
+
+- **Mission control** (key `1`) puts everything on one screen: headline KPIs, the charger with both connectors (plug in, tap cards, faults, protocol and sim speed), the CSMS station list and remote control, the live power chart, a compact rogue control card, and one OCPP traffic view you can flip between *all stations (CSMS)*, the charger, or the rogue node.
+- **CSMS / Charger / Rogue** (keys `2`, `3`, `4`) open each original GUI full size, inside the same page.
+- `A` arms or disarms the rogue node from anywhere. When it fires, the rogue card and the CSMS station panel flash, and the KPI strip shows the real charger still serving.
+
+It is not a copy: the dashboard reuses the real React components, and its small server just relays each part's live socket to the existing containers (`CSMS_UI`, `CHARGER_UI`, `ROGUE_UI`). The standalone GUIs on 8080 / 8081 / 8082 keep working and stay in sync with it.
 
 ## Things to try
 
@@ -143,6 +157,8 @@ apps/
              web/              = CSMS dashboard
   rogue/     server/rogue.ts   = the rogue charger (configurable misbehaviours, raw frame sender)
              web/              = rogue control GUI
+  demo/      server/index.ts   = serves the unified dashboard and relays its sockets to the three apps
+             web/              = the dashboard (reuses the other apps' components, CSS scoped per app)
 tests/       end-to-end charging session over both protocol versions
 ```
 
@@ -152,11 +168,12 @@ TypeScript everywhere. The servers run with `tsx`, the GUIs are built with Vite,
 
 | Variable | App | Default |
 | --- | --- | --- |
-| `PORT` | both | `8080` (CSMS), `8081` (charger) |
+| `PORT` | all | `8080` (CSMS), `8081` (charger), `8082` (rogue), `8083` (demo) |
 | `OCPP_PORT` | CSMS | `9000` |
 | `CSMS_URL` | charger | `ws://localhost:9000/ocpp` |
 | `CHARGE_POINT_ID` | charger | `CP-001` |
 | `OCPP_VERSION` | charger | `ocpp1.6` (or `ocpp2.0.1`) |
+| `CSMS_UI` / `CHARGER_UI` / `ROGUE_UI` | demo | `ws://localhost:8080` / `:8081` / `:8082` |
 
 The CSMS settings menu changes the heartbeat interval, the BootNotification answer (Accepted / Pending / Rejected) and whether unknown RFID cards are accepted.
 

@@ -1,4 +1,26 @@
 services:
+  # 🎬 One dashboard that drives all three GUIs below from a single browser tab.
+  # Open http://localhost:8083 for live demos. It relays to the other
+  # containers' GUI sockets, so 8080 / 8081 / 8082 keep working and stay in sync.
+  demo:
+    build:
+      context: .
+      args:
+        APP: demo
+    container_name: ocpp-demo
+    environment:
+      PORT: 8083
+      CSMS_UI: ws://csms:8080
+      CHARGER_UI: ws://charger:8081
+      ROGUE_UI: ws://rogue:8082
+    ports:
+      - "8083:8083" # unified demo dashboard
+    depends_on:
+      - csms
+      - charger
+      - rogue
+    restart: unless-stopped
+
   csms:
     build:
       context: .
