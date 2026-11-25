@@ -1,0 +1,304 @@
+:root {
+  --danger: #ff3b4e;
+  --danger-dim: #b91c2c;
+  --danger-glow: rgba(255, 59, 78, 0.25);
+}
+
+/* A red hazard wash so nobody mistakes this for the real charger GUI. */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(900px 500px at 50% -10%, rgba(255, 59, 78, 0.14), transparent 60%),
+    repeating-linear-gradient(45deg, rgba(255, 59, 78, 0.035) 0 22px, transparent 22px 44px);
+}
+
+.loading {
+  height: 100%;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 16px;
+  color: var(--muted);
+}
+.brand-logo.big {
+  font-size: 56px;
+}
+
+.rogue-shell {
+  max-width: 1500px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+/* -------------------------------------------------------- banner */
+.rogue-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  padding: 18px 22px;
+  margin-bottom: 18px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(255, 59, 78, 0.45);
+  background: linear-gradient(135deg, rgba(60, 12, 20, 0.7), rgba(16, 24, 42, 0.72));
+  box-shadow: 0 0 0 1px rgba(255, 59, 78, 0.15), 0 20px 60px -30px var(--danger-glow);
+}
+.rogue-shell.armed .rogue-banner {
+  animation: hazard 1.6s ease-in-out infinite;
+}
+@keyframes hazard {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px rgba(255, 59, 78, 0.2), 0 20px 60px -30px var(--danger-glow);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(255, 59, 78, 0.55), 0 24px 70px -24px rgba(255, 59, 78, 0.5);
+  }
+}
+.banner-main {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.skull {
+  font-size: 40px;
+  line-height: 1;
+  filter: drop-shadow(0 0 10px var(--danger-glow));
+}
+.rogue-banner h1 {
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.rogue-banner h1 .tag {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  color: #fecaca;
+  background: rgba(255, 59, 78, 0.18);
+  border: 1px solid rgba(255, 59, 78, 0.5);
+}
+.rogue-banner p {
+  margin: 0;
+  max-width: 640px;
+  font-size: 12.5px;
+}
+
+.arm-btn {
+  border: 1px solid var(--panel-border-strong);
+  background: rgba(30, 41, 59, 0.6);
+  color: var(--text);
+  padding: 12px 18px;
+  border-radius: 12px;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.3px;
+  transition: all 0.15s ease;
+}
+.arm-btn.armed {
+  background: linear-gradient(135deg, var(--danger), var(--danger-dim));
+  border-color: var(--danger);
+  box-shadow: 0 10px 30px -12px var(--danger-glow);
+}
+.arm-btn:hover {
+  transform: translateY(-1px);
+}
+
+/* -------------------------------------------------------- layout */
+.rogue-grid {
+  display: grid;
+  grid-template-columns: minmax(340px, 440px) 1fr;
+  gap: 18px;
+  align-items: start;
+}
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.rogue-grid > .col:last-child > .inspector {
+  position: sticky;
+  top: 18px;
+}
+@media (max-width: 1100px) {
+  .rogue-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.panel-head .head-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* -------------------------------------------------------- connection / kv */
+.kv {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 12px;
+  font-size: 12px;
+}
+.kv span {
+  color: var(--muted);
+}
+.kv code {
+  color: #cbd5e1;
+  font-size: 11.5px;
+  word-break: break-all;
+}
+.kv code.err,
+code.err {
+  color: var(--bad);
+}
+.conn-actions {
+  margin-top: 12px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border-strong);
+}
+.pill-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 8px currentColor;
+}
+.pill-ok {
+  color: var(--ok);
+}
+.pill-warn {
+  color: var(--warn);
+}
+.pill-bad {
+  color: var(--bad);
+}
+
+/* -------------------------------------------------------- telemetry */
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+.stat {
+  text-align: center;
+  padding: 10px 6px;
+  border-radius: 12px;
+  background: rgba(2, 6, 15, 0.45);
+  border: 1px solid var(--panel-border);
+}
+.stat-n {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+}
+.stat-l {
+  font-size: 10.5px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.intensity {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+}
+.seg-btn {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 6px 12px;
+  border-radius: 9px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 12px;
+}
+.seg-btn.active {
+  background: linear-gradient(135deg, rgba(255, 59, 78, 0.3), rgba(185, 28, 44, 0.3));
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px rgba(255, 59, 78, 0.45);
+}
+
+/* -------------------------------------------------------- attack grid */
+.attack-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px;
+}
+.attack-card {
+  padding: 11px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  background: rgba(2, 6, 15, 0.4);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.attack-card.on {
+  border-color: rgba(255, 59, 78, 0.5);
+  background: rgba(60, 12, 20, 0.35);
+}
+.attack-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.attack-top input {
+  accent-color: var(--danger);
+  width: 15px;
+  height: 15px;
+}
+.attack-name {
+  font-weight: 700;
+  font-size: 12.5px;
+}
+.attack-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--danger);
+  background: rgba(255, 59, 78, 0.12);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.attack-blurb {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+  flex: 1;
+}
+.btn-xs {
+  align-self: flex-start;
+  padding: 4px 10px;
+  font-size: 11px;
+  border-radius: 8px;
+  border: 1px solid var(--panel-border-strong);
+  background: rgba(30, 41, 59, 0.6);
+  color: inherit;
+  cursor: pointer;
+}
+.btn-xs:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
