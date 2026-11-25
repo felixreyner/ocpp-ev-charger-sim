@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { LogEntry } from '@sim/ocpp';
 
 export interface Toast {
@@ -8,13 +8,22 @@ export interface Toast {
 }
 
 const MAX_LOGS = 600;
+
+/**
+ * Path prefix for the backend socket. Each app talks to its own server at
+ * `/ui`; the unified demo dashboard proxies all three backends through one
+ * origin and wraps each part in a provider, e.g. `/csms` -> `/csms/ui`.
+ */
+export const LiveSocketBase = createContext('');
 let toastId = 0;
 
 /**
  * Connects to the app's own backend (/ui WebSocket), keeps the latest state
  * snapshot, the OCPP message log, and transient toasts.
  */
-export function useLiveSocket<S>(onOther?: (msg: any) => void) {
+export function useLiveSocket<S>(onOther?: (msg: any) => void, opts?: { base?: string }) {
+  const ctxBase = useContext(LiveSocketBase);
+  const base = opts?.base ?? ctxBase;
   const [state, setState] = useState<S | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [connected, setConnected] = useState(false);
@@ -34,7 +43,7 @@ export function useLiveSocket<S>(onOther?: (msg: any) => void) {
     let retry: ReturnType<typeof setTimeout>;
     const open = () => {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      const ws = new WebSocket(`${proto}://${location.host}/ui`);
+      const ws = new WebSocket(`${proto}://${location.host}${base}/ui`);
       wsRef.current = ws;
       ws.onopen = () => setConnected(true);
       ws.onclose = () => {
@@ -67,7 +76,7 @@ export function useLiveSocket<S>(onOther?: (msg: any) => void) {
       clearTimeout(retry);
       wsRef.current?.close();
     };
-  }, [pushToast]);
+  }, [pushToast, base]);
 
   const send = useCallback((msg: unknown) => {
     const ws = wsRef.current;

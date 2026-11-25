@@ -1,0 +1,764 @@
+/* ================================================================
+   Unified demo dashboard ("mission control").
+   The three apps' own stylesheets are loaded too, scoped under
+   .scope-csms / .scope-charger / .scope-rogue by vite.config.ts.
+   ================================================================ */
+
+.demo {
+  --nav-h: 62px;
+  --danger: #ff3b4e;
+  --danger-glow: rgba(255, 59, 78, 0.28);
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+body {
+  background:
+    radial-gradient(1100px 600px at 10% -10%, rgba(34, 211, 238, 0.09), transparent 60%),
+    radial-gradient(900px 520px at 90% -15%, rgba(129, 140, 248, 0.1), transparent 60%),
+    var(--bg);
+  background-attachment: fixed;
+}
+
+kbd {
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  border: 1px solid var(--panel-border-strong);
+  border-bottom-width: 2px;
+  color: var(--muted);
+  background: rgba(2, 6, 15, 0.6);
+}
+
+/* ---------------------------------------------------------- top nav */
+.demo-nav {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  height: var(--nav-h);
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 20px;
+  background: rgba(4, 7, 14, 0.82);
+  backdrop-filter: blur(16px) saturate(1.3);
+  border-bottom: 1px solid var(--panel-border);
+}
+.demo-nav::after {
+  /* a thin "energy" line under the nav */
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent), var(--accent-2), var(--charge), transparent);
+  background-size: 200% 100%;
+  animation: navflow 6s linear infinite;
+  opacity: 0.7;
+}
+.demo.is-armed .demo-nav::after {
+  background-image: linear-gradient(90deg, transparent, var(--danger), #ff9f43, var(--danger), transparent);
+  opacity: 1;
+}
+@keyframes navflow {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.demo-brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font-weight: 800;
+  font-size: 16px;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+}
+.demo-brand small {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.demo-logo {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+  background: conic-gradient(from 210deg, var(--accent), var(--accent-2), var(--charge), var(--accent));
+  box-shadow: 0 0 22px rgba(34, 211, 238, 0.45);
+}
+
+.demo-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 14px;
+  background: rgba(2, 6, 15, 0.7);
+  border: 1px solid var(--panel-border-strong);
+}
+.demo-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 7px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 650;
+  font-size: 13px;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+.demo-tab:hover {
+  color: var(--text);
+  background: rgba(148, 163, 184, 0.08);
+}
+.demo-tab.on {
+  color: var(--text);
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.22), rgba(129, 140, 248, 0.22));
+  box-shadow: inset 0 0 0 1px rgba(34, 211, 238, 0.45);
+}
+.demo-tab.tab-rogue.on {
+  background: linear-gradient(135deg, rgba(255, 59, 78, 0.28), rgba(129, 30, 50, 0.3));
+  box-shadow: inset 0 0 0 1px rgba(255, 59, 78, 0.55);
+}
+.tab-icon {
+  font-size: 14px;
+}
+.tab-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--off);
+}
+.tab-dot.live {
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok);
+}
+
+.arm-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 999px;
+  padding: 7px 12px;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  border: 1px solid var(--panel-border-strong);
+  background: rgba(30, 41, 59, 0.5);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.arm-chip.armed {
+  color: #fff;
+  border-color: var(--danger);
+  background: linear-gradient(135deg, rgba(255, 59, 78, 0.85), rgba(185, 28, 44, 0.85));
+  box-shadow: 0 0 18px var(--danger-glow);
+  animation: armpulse 1.6s ease-in-out infinite;
+}
+.arm-chip.armed kbd {
+  color: #fecaca;
+  border-color: rgba(255, 255, 255, 0.35);
+  background: rgba(0, 0, 0, 0.2);
+}
+@keyframes armpulse {
+  50% {
+    box-shadow: 0 0 30px rgba(255, 59, 78, 0.55);
+  }
+}
+.demo-clock {
+  color: var(--muted);
+  font-size: 13px;
+  min-width: 64px;
+  text-align: right;
+}
+
+/* ------------------------------------------- full-size app inside the shell */
+.demo .full-view {
+  flex: 1;
+}
+.demo .full-view .topbar {
+  top: var(--nav-h);
+}
+.demo .scope-csms.full-view .layout > .inspector,
+.demo .scope-charger.full-view .layout > .inspector {
+  top: calc(var(--nav-h) + 86px);
+  height: calc(100vh - var(--nav-h) - 110px);
+}
+.demo .scope-rogue.full-view .rogue-grid > .col:last-child > .inspector {
+  top: calc(var(--nav-h) + 18px);
+}
+.demo .full-view .loading {
+  min-height: calc(100vh - var(--nav-h));
+}
+
+/* ------------------------------------------------------ mission control */
+.mc {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px 20px 20px;
+}
+
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
+}
+.kpi {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  transition: box-shadow 0.25s ease, border-color 0.25s ease;
+}
+.kpi::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  opacity: 0.55;
+}
+.kpi-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  font-weight: 700;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kpi-value {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.kpi-value small {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.kpi-note {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kpi-charge .kpi-value {
+  color: var(--charge);
+}
+.kpi-charge::after {
+  background: linear-gradient(90deg, var(--charge), var(--ok));
+}
+.kpi-charge.glow {
+  border-color: rgba(163, 255, 18, 0.35);
+  box-shadow: 0 0 30px -8px rgba(163, 255, 18, 0.35);
+}
+.kpi-ok .kpi-value {
+  color: var(--ok);
+  text-transform: capitalize;
+}
+.kpi-ok::after {
+  background: var(--ok);
+}
+.kpi-bad .kpi-value {
+  color: var(--bad);
+  text-transform: capitalize;
+}
+.kpi-bad::after {
+  background: var(--bad);
+}
+.kpi-danger .kpi-value {
+  color: #ff8794;
+}
+.kpi-danger::after {
+  background: linear-gradient(90deg, var(--danger), #ff9f43);
+  opacity: 0.9;
+}
+.kpi-danger.glow {
+  border-color: rgba(255, 59, 78, 0.6);
+  box-shadow: 0 0 34px -6px var(--danger-glow);
+}
+
+.mc-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr) minmax(360px, 0.95fr);
+  gap: 16px;
+  align-items: start;
+}
+.mc-col {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.mc-side {
+  position: sticky;
+  top: calc(var(--nav-h) + 16px);
+  height: calc(100vh - var(--nav-h) - 32px);
+  min-height: 640px;
+}
+.mc-side > .scope-rogue {
+  flex: none;
+}
+.mc-flow {
+  flex: 1;
+  min-height: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.mc-flow .inspector {
+  flex: 1;
+  min-height: 0;
+}
+.flow-seg {
+  align-self: flex-start;
+}
+.flow-seg button {
+  padding: 5px 10px;
+  font-size: 11.5px;
+}
+
+/* the charger stage gets a bit tighter in the overview column */
+.mc-charger .stage {
+  grid-template-columns: minmax(0, 1fr) 176px minmax(0, 1fr);
+  gap: 14px;
+  padding: 14px;
+}
+.mc-charger .metric b {
+  font-size: 18px;
+}
+.mc-charger .metric-grid {
+  gap: 8px;
+}
+.mc-charger .power-chart {
+  max-height: 210px;
+}
+
+.mc-foot {
+  text-align: center;
+  padding-top: 4px;
+}
+.mc-foot kbd {
+  margin: 0 1px;
+}
+
+/* --------------------------------------------------------------- zones */
+.zone {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.zone-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.zone-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-height: 36px;
+}
+.zone-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.2), rgba(129, 140, 248, 0.2));
+  border: 1px solid rgba(34, 211, 238, 0.35);
+}
+.zone-danger .zone-icon {
+  background: rgba(255, 59, 78, 0.15);
+  border-color: rgba(255, 59, 78, 0.5);
+}
+.zone-title {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+  min-width: 0;
+}
+.zone-title b {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+.zone-title span {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.zone-live {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--bad);
+  box-shadow: 0 0 8px var(--bad);
+}
+.zone-live.on {
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok);
+  animation: blink 2.4s infinite;
+}
+.zone-tools {
+  order: 2;
+  margin-left: auto;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.zone-tools .seg button {
+  padding: 5px 9px;
+  font-size: 11.5px;
+}
+.zone-expand {
+  order: 1;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--panel-border-strong);
+  background: rgba(30, 41, 59, 0.5);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 15px;
+}
+.zone-expand:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+/* CSMS column lights up briefly whenever the rogue node fires a probe */
+.mc-csms > .zone > .zone-body > .panel:first-child {
+  transition: box-shadow 0.3s ease, border-color 0.3s ease;
+}
+.mc-csms.shield > .zone > .zone-body > .panel:first-child {
+  border-color: rgba(255, 59, 78, 0.5);
+  box-shadow: 0 0 0 1px rgba(255, 59, 78, 0.25), 0 0 40px -12px var(--danger-glow);
+}
+
+.waiting {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 28px 24px;
+  color: var(--muted);
+}
+.waiting p {
+  margin: 0;
+}
+.spinner {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 3px solid rgba(148, 163, 184, 0.2);
+  border-top-color: var(--accent);
+  animation: spin 0.9s linear infinite;
+  flex: none;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---------------------------------------------------------- rogue card */
+.rogue-card {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-color: rgba(255, 59, 78, 0.28);
+  background:
+    repeating-linear-gradient(45deg, rgba(255, 59, 78, 0.03) 0 16px, transparent 16px 32px),
+    linear-gradient(160deg, rgba(60, 12, 20, 0.55), rgba(16, 24, 42, 0.72));
+  transition: box-shadow 0.25s ease, border-color 0.25s ease;
+}
+.rogue-card.armed {
+  border-color: rgba(255, 59, 78, 0.55);
+  box-shadow: 0 0 40px -18px var(--danger-glow);
+}
+.rogue-card.flash {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 1px rgba(255, 59, 78, 0.45), 0 0 50px -10px rgba(255, 59, 78, 0.55);
+}
+.rc-top {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.rc-top .arm-btn {
+  flex: 1;
+  padding: 10px 14px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.rogue-card.armed .arm-btn {
+  animation: armpulse 1.6s ease-in-out infinite;
+}
+.rc-conn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.rc-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.rc-stats div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 4px;
+  border-radius: 10px;
+  background: rgba(2, 6, 15, 0.45);
+  border: 1px solid rgba(255, 59, 78, 0.14);
+}
+.rc-stats b {
+  font-size: 16px;
+  color: #ffd1d6;
+}
+.rc-stats span {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.rc-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.rc-row .seg button {
+  padding: 4px 9px;
+  font-size: 11.5px;
+}
+.rc-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: var(--muted);
+}
+.rc-attacks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.rc-attacks li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px 5px 8px;
+  border-radius: 9px;
+  border: 1px solid var(--panel-border);
+  background: rgba(2, 6, 15, 0.35);
+  font-size: 12px;
+  min-width: 0;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+.rc-attacks li.on {
+  border-color: rgba(255, 59, 78, 0.35);
+  background: rgba(255, 59, 78, 0.07);
+}
+.rc-attacks li.hot {
+  border-color: var(--danger);
+  background: rgba(255, 59, 78, 0.2);
+}
+.rc-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rc-attacks li:not(.on) .rc-name {
+  color: var(--muted);
+}
+.rc-count {
+  font-size: 10.5px;
+  color: #ff8794;
+}
+.rc-fire {
+  width: 24px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1px solid var(--panel-border-strong);
+  background: transparent;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0;
+}
+.rc-fire:hover:not(:disabled) {
+  border-color: var(--danger);
+  background: rgba(255, 59, 78, 0.15);
+}
+.rc-fire:disabled {
+  opacity: 0.25;
+  cursor: not-allowed;
+}
+
+/* small toggle switch */
+.switch {
+  position: relative;
+  width: 28px;
+  height: 16px;
+  flex: none;
+  cursor: pointer;
+}
+.switch input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  margin: 0;
+  cursor: pointer;
+}
+.switch span {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: rgba(100, 116, 139, 0.45);
+  transition: background 0.15s ease;
+  pointer-events: none;
+}
+.switch span::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #e2e8f0;
+  transition: transform 0.15s ease;
+}
+.switch input:checked + span {
+  background: var(--danger);
+  box-shadow: 0 0 10px var(--danger-glow);
+}
+.switch input:checked + span::after {
+  transform: translateX(12px);
+}
+.switch input:focus-visible + span {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* --------------------------------------------------------- responsive */
+@media (max-width: 1680px) {
+  /* two columns: charger + rogue on the left, CSMS on the right, traffic below */
+  .mc-grid {
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+    grid-template-areas:
+      'charger csms'
+      'rogue csms'
+      'flow flow';
+  }
+  .mc-charger {
+    grid-area: charger;
+  }
+  .mc-csms {
+    grid-area: csms;
+  }
+  .mc-side {
+    display: contents;
+  }
+  .mc-side > .scope-rogue {
+    grid-area: rogue;
+  }
+  .mc-flow {
+    grid-area: flow;
+  }
+  .mc-flow .inspector {
+    height: 620px;
+    flex: none;
+  }
+}
+@media (max-width: 1180px) {
+  .mc-grid {
+    grid-template-columns: 1fr;
+    grid-template-areas: 'charger' 'csms' 'rogue' 'flow';
+  }
+  .kpis {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .demo-brand small,
+  .demo-clock {
+    display: none;
+  }
+}
+@media (max-width: 860px) {
+  .demo-nav {
+    height: auto;
+    flex-wrap: wrap;
+    padding: 10px 16px;
+    gap: 10px;
+  }
+  .demo {
+    --nav-h: 0px;
+    overflow-x: clip;
+  }
+  .demo-nav {
+    position: static;
+  }
+  .demo-tabs {
+    order: 3;
+    width: 100%;
+    overflow-x: auto;
+  }
+  .demo-tab kbd {
+    display: none;
+  }
+  .mc {
+    padding: 12px 16px 16px;
+  }
+  .kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .mc-charger .stage {
+    grid-template-columns: 1fr;
+  }
+  .rc-attacks {
+    grid-template-columns: 1fr;
+  }
+}
