@@ -68,17 +68,23 @@ The stack also includes a **rogue / faulty charger** — a deliberately misbehav
 
 Each misbehaviour is an independently toggleable **attack mode** (buttons in the GUI, or the `ROGUE_ATTACKS` env var). There's a master **Arm / Disarm** switch, a **×1–×8 intensity** dial, and a live log of every frame it fires plus the CSMS's reply.
 
-| Mode | What the CSMS sees |
-| --- | --- |
-| `malformed` | Non-JSON junk, wrong array shapes, missing fields, bad field types |
-| `bogusMeter` | Impossible meter values — negative energy, terawatt readings, counters running backwards |
-| `flood` | Rapid-fire Heartbeat / StatusNotification bursts |
-| `reconnectStorm` | Opens and slams the WebSocket shut every couple of seconds |
-| `replay` | Re-used old messageIds and CALLRESULTs for requests that were never made |
-| `oversized` | Several-hundred-kilobyte string fields |
-| `wrongType` | Frames with unknown message-type numbers and stray CALLERRORs |
-| `invalidTx` | MeterValues / StopTransaction for transactions that never started |
-| `ignoreCommands` | Never answers Reset / remote commands; keeps many CALLs in flight at once |
+Every mode here is one a WAF such as FortiWeb can stop — by schema validation, a rate limit, or its attack-signature engine — so the demo shows traffic going *in* and the WAF (or the CSMS behind it) turning it away.
+
+| Mode | What the CSMS sees | How a WAF catches it |
+| --- | --- | --- |
+| `malformed` | Non-JSON junk, wrong array shapes, missing fields, bad field types | Schema / frame validation |
+| `bogusMeter` | Impossible meter values — negative energy, terawatt readings, counters running backwards | Schema number ranges |
+| `flood` | Rapid-fire Heartbeat / StatusNotification bursts | Rate / flood limit |
+| `reconnectStorm` | Opens and slams the WebSocket shut every couple of seconds | HTTP access-rate limit on the handshake |
+| `oversized` | Several-hundred-kilobyte string fields | `maxLength` + WebSocket message-size cap |
+| `wrongType` | Frames with unknown message-type numbers and stray CALLERRORs | Schema / frame validation |
+| `sqlInjection` | SQL payloads (`' OR 1=1--`, `UNION SELECT`, `DROP TABLE`) smuggled into idTag / vendor fields | Field patterns + SQLi signatures |
+| `xssPayload` | `<script>`, `<img onerror>` and `javascript:` URIs planted in idTag / vendor strings | Field patterns + XSS signatures |
+| `pathTraversal` | `../../etc/passwd` and encoded `..%2f` sequences in idTag, vendor and transaction ids | Field patterns + traversal signatures |
+
+The three injection modes are the point of this build: they send **structurally valid** OCPP frames whose string fields carry an attack payload, so pure framing checks let them through and a WAF has to inspect the content. The hardened field patterns in [`specs/`](specs/README.md) reject the long or space-bearing payloads, and the attack-signature engine catches the short, pattern-legal ones that slip past the schema.
+
+> Modes that a WAF *can't* see — a charger that simply ignores CSMS commands, or replays a valid id that only the stateful CSMS can recognize — were removed from this build, since there's nothing for FortiWeb to demonstrate against them. The CSMS still handles them (call timeouts, transaction state); they're just not rogue-menu buttons anymore.
 
 ### Configuration
 
@@ -88,13 +94,13 @@ Each misbehaviour is an independently toggleable **attack mode** (buttons in the
 | `OCPP_VERSION` | `ocpp1.6` | `ocpp1.6` or `ocpp2.0.1` |
 | `ROGUE_ARMED` | `true` | Start misbehaving on boot (toggle live in the GUI) |
 | `ROGUE_INTENSITY` | `1` | `1`–`8`, scales how fast attacks fire |
-| `ROGUE_ATTACKS` | *(a broad default)* | Comma list of modes, or `all` / `none`. Unset = everything except the noisiest `flood` and `reconnectStorm` |
+| `ROGUE_ATTACKS` | *(a broad default)* | Comma list of modes, or `all` / `none`. Unset = everything except the noisiest `flood` and `reconnectStorm` (so `malformed,bogusMeter,oversized,wrongType,sqlInjection,xssPayload,pathTraversal`) |
 
 To leave it out of a run entirely: `docker compose up --build csms charger`.
 
 ### 🛡️ Blocking it with a WAF (OpenAPI / JSON Schema)
 
-[`specs/`](specs/README.md) has OpenAPI 3.0 and JSON Schema files that describe only legitimate OCPP traffic to the CSMS: the WebSocket handshake on `/ocpp/{chargePointId}` and every OCPP 1.6J / 2.0.1 frame, with strict types, enums, lengths and meter-value ranges. Load them into FortiWeb (or any schema validator) to reject the rogue node's malformed, oversized, wrong-type and impossible-meter frames. [specs/README.md](specs/README.md) shows how, and which attack modes still need rate limits or CSMS-side checks.
+[`specs/`](specs/README.md) has OpenAPI 3.0 and JSON Schema files that describe only legitimate OCPP traffic to the CSMS: the WebSocket handshake on `/ocpp/{chargePointId}` and every OCPP 1.6J / 2.0.1 frame, with strict types, enums, lengths and meter-value ranges. Load them into FortiWeb (or any schema validator) to reject the rogue node's malformed, oversized, wrong-type and impossible-meter frames, and turn on the attack-signature scan to catch the SQLi / XSS / path-traversal payloads. [specs/README.md](specs/README.md) shows how, and which modes rely on rate limits versus signatures.
 
 ## OCPP in five minutes
 

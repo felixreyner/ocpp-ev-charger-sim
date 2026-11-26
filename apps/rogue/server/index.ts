@@ -13,7 +13,7 @@ const STATIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 /** Default mix: broadly rogue, but the two noisiest modes (flood, reconnect
  *  storm) start off so a fresh `docker compose up` stays legible. Toggle them
  *  in the GUI, or set ROGUE_ATTACKS. */
-const DEFAULT_ON: AttackId[] = ['malformed', 'bogusMeter', 'replay', 'oversized', 'wrongType', 'invalidTx', 'ignoreCommands'];
+const DEFAULT_ON: AttackId[] = ['malformed', 'bogusMeter', 'oversized', 'wrongType', 'sqlInjection', 'xssPayload', 'pathTraversal'];
 
 function parseAttacks(): AttackFlags {
   const flags = Object.fromEntries(ATTACKS.map((a) => [a.id, false])) as AttackFlags;

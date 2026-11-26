@@ -62,13 +62,11 @@ export class RogueCharger extends EventEmitter {
   private stats: RogueState['stats'] = {
     framesSent: 0,
     attacksFired: blankCounts(),
-    commandsIgnored: 0,
+    injectionProbes: 0,
     lastAttack: null,
   };
 
-  /** Pool of messageIds we have used, so `replay` can re-send old ones. */
-  private usedIds: string[] = [];
-  /** Transaction ids we pretend exist (none of these were ever started). */
+  /** Transaction id the bogus-meter mode reports against (never actually started). */
   private phantomTxId = 90000;
 
   constructor(config: RogueConfig, attacks: AttackFlags, armed: boolean) {
@@ -221,7 +219,6 @@ export class RogueCharger extends EventEmitter {
 
     for (const meta of ATTACKS) {
       if (!this.attacks[meta.id]) continue;
-      if (meta.id === 'ignoreCommands') continue; // passive: handled in onMessage
       if (meta.id === 'reconnectStorm') {
         // Slam the socket shut on a cadence; `close` restarts it fast.
         const period = Math.max(400, meta.everyMs / this.config.intensity);
@@ -254,14 +251,16 @@ export class RogueCharger extends EventEmitter {
         return this.attackBogusMeter();
       case 'flood':
         return this.attackFlood();
-      case 'replay':
-        return this.attackReplay();
       case 'oversized':
         return this.attackOversized();
       case 'wrongType':
         return this.attackWrongType();
-      case 'invalidTx':
-        return this.attackInvalidTx();
+      case 'sqlInjection':
+        return this.attackInjection('sqlInjection');
+      case 'xssPayload':
+        return this.attackInjection('xssPayload');
+      case 'pathTraversal':
+        return this.attackInjection('pathTraversal');
       default:
         return;
     }
@@ -321,19 +320,6 @@ export class RogueCharger extends EventEmitter {
     }
   }
 
-  private attackReplay() {
-    this.note('replay');
-    if (Math.random() < 0.5 && this.usedIds.length) {
-      // Re-use an old messageId on a brand new CALL.
-      const id = pick(this.usedIds);
-      this.sendRaw(JSON.stringify([2, id, 'Heartbeat', {}]), { kind: 'CALL', action: 'Heartbeat', messageId: id });
-    } else {
-      // A CALLRESULT answering a request the CSMS never sent.
-      const id = this.id();
-      this.sendRaw(JSON.stringify([3, id, { currentTime: now() }]), { kind: 'CALLRESULT', action: 'Unsolicited', messageId: id });
-    }
-  }
-
   private attackOversized() {
     this.note('oversized');
     const blob = 'A'.repeat(300_000);
@@ -352,24 +338,50 @@ export class RogueCharger extends EventEmitter {
     this.sendRaw(pick(variants)(), { kind: 'CALLERROR', action: 'WrongType', messageId: id });
   }
 
-  private attackInvalidTx() {
-    this.note('invalidTx');
-    const bogusTx = pick([-1, 0, 999999999, this.phantomTxId + rand(1000)]);
+  /**
+   * Injection-style attacks: well-formed OCPP frames whose string fields carry a
+   * SQLi / XSS / path-traversal payload. The framing is valid, so only content
+   * inspection stops them — exactly what a WAF's signature engine (and the
+   * hardened field patterns in specs/) is for. The payload rides in the fields a
+   * CSMS most often looks up or logs: the RFID idTag/idToken and the vendor
+   * strings, plus a transaction id in 2.0.1.
+   */
+  private attackInjection(id: 'sqlInjection' | 'xssPayload' | 'pathTraversal') {
+    this.note(id);
+    this.stats.injectionProbes++;
+    const payload = pick(INJECTION_PAYLOADS[id]);
+    // Spread the payload across a few carriers so the probe hits different
+    // field validators (strict token fields vs. looser free-text vendor fields).
+    const carrier = pick(['authorize', 'boot', 'startTx']);
+
     if (this.config.version === 'ocpp1.6') {
-      this.sendCall('StopTransaction', {
-        transactionId: bogusTx,
-        meterStop: rand(100000),
-        timestamp: now(),
-        reason: 'Local',
-      });
+      if (carrier === 'authorize') {
+        this.sendCall('Authorize', { idTag: payload });
+      } else if (carrier === 'startTx') {
+        this.sendCall('StartTransaction', {
+          connectorId: 1,
+          idTag: payload,
+          meterStart: rand(1000),
+          timestamp: now(),
+        });
+      } else {
+        this.sendCall('BootNotification', buildBoot('ocpp1.6', { vendor: payload }));
+      }
     } else {
-      this.sendCall('TransactionEvent', {
-        eventType: 'Ended',
-        timestamp: now(),
-        triggerReason: 'StopAuthorized',
-        seqNo: rand(5),
-        transactionInfo: { transactionId: `phantom-${bogusTx}` },
-      });
+      if (carrier === 'authorize') {
+        this.sendCall('Authorize', { idToken: { idToken: payload, type: 'ISO14443' } });
+      } else if (carrier === 'startTx') {
+        this.sendCall('TransactionEvent', {
+          eventType: 'Started',
+          timestamp: now(),
+          triggerReason: 'Authorized',
+          seqNo: rand(5),
+          transactionInfo: { transactionId: payload },
+          idToken: { idToken: payload, type: 'ISO14443' },
+        });
+      } else {
+        this.sendCall('BootNotification', buildBoot('ocpp2.0.1', { vendor: payload }));
+      }
     }
   }
 
@@ -390,29 +402,19 @@ export class RogueCharger extends EventEmitter {
       errorCode: isError ? String(frame[2] ?? '') : undefined,
       errorDescription: isError ? String(frame[3] ?? '') : undefined,
     });
-    // We never match CSMS responses back to our requests — "ignoring CSMS
-    // responses" is itself one of the misbehaviours — so CALLRESULT/CALLERROR
+    // We don't match CSMS responses back to our requests, so CALLRESULT/CALLERROR
     // frames are simply dropped here.
     if (!isCommand) return;
-    // The CSMS has sent us a CALL (Reset, RemoteStart, TriggerMessage, …).
-    if (this.armed && this.attacks.ignoreCommands) {
-      // Leave it hanging: no answer at all.
-      this.stats.commandsIgnored++;
-      this.emitState();
-      return;
-    }
-    // Otherwise reply with a bare empty CALLRESULT so the node looks half-alive
-    // without actually doing what was asked.
+    // The CSMS has sent us a CALL (Reset, RemoteStart, TriggerMessage, …). Reply
+    // with a bare empty CALLRESULT so the node looks half-alive without actually
+    // doing what was asked.
     this.sendRaw(JSON.stringify([3, frame[1], {}]), { kind: 'CALLRESULT', action: String(frame[2] ?? '?'), messageId: frame[1] });
   }
 
   // ------------------------------------------------------------------ sending
 
   private id() {
-    const id = `${Date.now().toString(36)}-${(globalSeq++).toString(36)}`;
-    this.usedIds.push(id);
-    if (this.usedIds.length > 50) this.usedIds.shift();
-    return id;
+    return `${Date.now().toString(36)}-${(globalSeq++).toString(36)}`;
   }
 
   private sendBoot() {
@@ -487,10 +489,10 @@ export class RogueCharger extends EventEmitter {
 
 // ---------------------------------------------------------------------- helpers
 
-function buildBoot(version: OcppVersion, over: { model?: string }): Record<string, unknown> {
+function buildBoot(version: OcppVersion, over: { model?: string; vendor?: string }): Record<string, unknown> {
   if (version === 'ocpp1.6') {
     return {
-      chargePointVendor: IDENTITY.vendor,
+      chargePointVendor: over.vendor ?? IDENTITY.vendor,
       chargePointModel: over.model ?? IDENTITY.model,
       chargePointSerialNumber: IDENTITY.serial,
       firmwareVersion: IDENTITY.firmware,
@@ -499,13 +501,49 @@ function buildBoot(version: OcppVersion, over: { model?: string }): Record<strin
   return {
     reason: 'PowerUp',
     chargingStation: {
-      vendorName: IDENTITY.vendor,
+      vendorName: over.vendor ?? IDENTITY.vendor,
       model: over.model ?? IDENTITY.model,
       serialNumber: IDENTITY.serial,
       firmwareVersion: IDENTITY.firmware,
     },
   };
 }
+
+/**
+ * Injection payload bank. A deliberate mix of two kinds, so a demo shows both
+ * layers of a WAF deployment catching it:
+ *  - payloads with spaces or over the field length limit — rejected outright by
+ *    the hardened field patterns/maxLength in specs/ (schema validation), and
+ *  - compact, pattern-legal payloads (no spaces, short) that slip past schema
+ *    validation and are caught by the attack-signature engine (SQLi/XSS/traversal
+ *    signatures) instead.
+ */
+const INJECTION_PAYLOADS: Record<'sqlInjection' | 'xssPayload' | 'pathTraversal', string[]> = {
+  sqlInjection: [
+    "' OR '1'='1' --", // space → schema pattern blocks it in token fields
+    "'; DROP TABLE charging_sessions;--", // space + length → schema blocks
+    "1' UNION SELECT username,password FROM users--", // space + length → schema blocks
+    "admin'--", // compact, no space → signature engine territory
+    "RFID'||pg_sleep(5)||'", // compact, no space → signature engine territory
+    "1;WAITFOR DELAY '0:0:5'--", // signature engine territory
+  ],
+  xssPayload: [
+    '<script>alert(document.cookie)</script>', // length → schema blocks
+    '<img src=x onerror=alert(1)>', // space + length → schema blocks
+    '"><svg onload=alert(1)>', // space → schema blocks
+    '<svg/onload=alert(1)>', // compact, no space → signature engine
+    'javascript:alert(1)', // compact, no space → signature engine
+    '<img/src/onerror=alert`1`>', // compact, no space → signature engine
+  ],
+  pathTraversal: [
+    '../../../../etc/passwd', // length → schema blocks in 20-char token fields
+    '/var/run/../../etc/shadow', // length → schema blocks
+    '..\\..\\..\\windows\\win.ini', // length → schema blocks
+    '..%2f..%2fetc', // compact, no space → signature engine
+    '....//....//', // compact, no space → signature engine
+    '%2e%2e%2fboot', // compact, no space → signature engine
+  ],
+};
 
 function safeParse(raw: string): unknown {
   try {

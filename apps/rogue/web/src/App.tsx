@@ -110,7 +110,7 @@ function AttackRow({ s, act }: { s: RogueState; act: (a: RogueAction) => void })
                 {fired > 0 && <span className="attack-count mono">{fired}</span>}
               </label>
               <p className="attack-blurb">{a.blurb}</p>
-              <button className="btn btn-xs" onClick={() => act({ type: 'burst', attack: a.id as AttackId })} disabled={a.id === 'reconnectStorm' || a.id === 'ignoreCommands'}>
+              <button className="btn btn-xs" onClick={() => act({ type: 'burst', attack: a.id as AttackId })} disabled={a.id === 'reconnectStorm'}>
                 Fire once
               </button>
             </div>
@@ -212,8 +212,8 @@ export function App() {
                 <div className="stat-l">modes on</div>
               </div>
               <div className="stat">
-                <div className="stat-n mono">{s.stats.commandsIgnored}</div>
-                <div className="stat-l">cmds ignored</div>
+                <div className="stat-n mono">{s.stats.injectionProbes}</div>
+                <div className="stat-l">injection probes</div>
               </div>
               <div className="stat">
                 <div className="stat-n mono">{s.stats.lastAttack ? ago(s.stats.lastAttack.at) : '—'}</div>

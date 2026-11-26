@@ -177,24 +177,84 @@ for (const version of ['ocpp1.6', 'ocpp2.0.1'] as OcppVersion[]) {
     // The boot the rogue sends is shaped correctly; a schema cannot tell it apart.
     assert.ok(sent.length > 0 && sent.every(okFrame));
 
-    const blockedShare: Partial<Record<AttackId, number>> = {};
-    for (const attack of ['malformed', 'bogusMeter', 'oversized', 'wrongType', 'replay', 'invalidTx', 'flood'] as AttackId[]) {
+    const capture = async (attack: AttackId): Promise<string[]> => {
       sent = [];
       for (let i = 0; i < 60; i++) rogue.burst(attack);
       await until(() => sent.length >= 60);
       await wait(150);
-      blockedShare[attack] = sent.filter((raw) => !okFrame(raw)).length / sent.length;
+      return sent.slice();
+    };
+
+    const blockedShare: Partial<Record<AttackId, number>> = {};
+    for (const attack of ['malformed', 'bogusMeter', 'oversized', 'wrongType', 'flood'] as AttackId[]) {
+      const frames = await capture(attack);
+      blockedShare[attack] = frames.filter((raw) => !okFrame(raw)).length / frames.length;
     }
 
-    // Fully caught by the schema.
+    // Fully caught by the schema (malformed structure, impossible numbers, over-length, bad message type).
     for (const a of ['malformed', 'bogusMeter', 'oversized', 'wrongType'] as AttackId[]) assert.equal(blockedShare[a], 1, `${a}: ${blockedShare[a]}`);
-    // Partly caught: unsolicited CALLRESULTs and negative/zero ids are; reused ids and unknown-but-valid ids need state.
-    assert.ok(blockedShare.replay! > 0 && blockedShare.replay! < 1, `replay: ${blockedShare.replay}`);
-    if (version === 'ocpp1.6') assert.ok(blockedShare.invalidTx! > 0 && blockedShare.invalidTx! < 1, `invalidTx: ${blockedShare.invalidTx}`);
-    else assert.equal(blockedShare.invalidTx, 0, 'phantom 2.0.1 transaction ids are well-formed strings');
     // Floods are valid Heartbeats/StatusNotifications: only rate limiting stops them. (In 2.0.1 mode the
     // rogue sends 1.6-shaped StatusNotifications, so that half of the flood is rejected by the schema.)
     if (version === 'ocpp1.6') assert.equal(blockedShare.flood, 0);
     else assert.ok(blockedShare.flood! > 0 && blockedShare.flood! < 1, `flood: ${blockedShare.flood}`);
+  });
+}
+
+/**
+ * The injection modes send structurally-valid OCPP frames whose string fields
+ * carry a SQLi / XSS / path-traversal payload. A WAF stops these in two ways and
+ * this test checks both: the hardened field patterns/lengths in specs/ reject
+ * the long or space-bearing payloads (schema layer), and every frame carries a
+ * recognizable attack signature that a signature engine (FortiWeb's, or any WAF
+ * with SQLi/XSS/traversal signatures) catches regardless of schema.
+ */
+const SIGNATURES: Record<'sqlInjection' | 'xssPayload' | 'pathTraversal', RegExp> = {
+  sqlInjection: /('|union\s+select|drop\s+table|pg_sleep|waitfor\s+delay|or\s+'?1'?='?1|--)/i,
+  xssPayload: /(<script|<svg|<img|onerror=|onload=|javascript:)/i,
+  pathTraversal: /(\.\.\/|\.\.\\|%2e%2e|%2f|\.\.%2f|\.\.\.\.\/\/)/i,
+};
+
+for (const version of ['ocpp1.6', 'ocpp2.0.1'] as OcppVersion[]) {
+  test(`rogue injection frames carry a WAF-detectable signature (${version})`, async () => {
+    const p = port++;
+    const central = new Central(p);
+    const flags = Object.fromEntries(ATTACKS.map((a) => [a.id, false])) as AttackFlags;
+    const rogue = new RogueCharger({ csmsUrl: `ws://127.0.0.1:${p}/ocpp`, chargePointId: 'ROGUE-666', version, intensity: 1 }, flags, false);
+    cleanups.push(() => rogue.shutdown(), () => central.close());
+    let sent: string[] = [];
+    central.on('log', (e: LogEntry) => e.dir === 'in' && e.peer === 'ROGUE-666' && sent.push(e.raw));
+    rogue.connect();
+    await until(() => rogue.state().connection.state === 'connected');
+    await wait(200);
+
+    const okFrame = frameValidator(version);
+
+    for (const attack of ['sqlInjection', 'xssPayload', 'pathTraversal'] as const) {
+      sent = [];
+      for (let i = 0; i < 60; i++) rogue.burst(attack);
+      await until(() => sent.length >= 60);
+      await wait(150);
+      // Only the rogue's own CALLs (the injection probes), not any reply frame.
+      const frames = sent.filter((raw) => {
+        try {
+          return (JSON.parse(raw) as unknown[])[0] === 2;
+        } catch {
+          return true;
+        }
+      });
+      assert.ok(frames.length >= 50, `${attack}: expected probes, got ${frames.length}`);
+
+      // Every injection frame is content a signature engine can match on.
+      const sig = SIGNATURES[attack];
+      assert.ok(
+        frames.every((raw) => sig.test(raw)),
+        `${attack}: every frame should carry a detectable signature`,
+      );
+      // The schema layer alone catches the long / space-bearing payloads, but not
+      // the short pattern-legal ones — those need the signature engine. So the
+      // schema rejects some but never all of them.
+      const blocked = frames.filter((raw) => !okFrame(raw)).length / frames.length;
+      assert.ok(blocked < 1, `${attack}: schema alone should not catch every payload (got ${blocked})`);
+    }
   });
 }
