@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { MessageInspector, Toasts, ago, useLiveSocket } from '@sim/ui';
-import { ATTACKS, type AttackId, type RogueAction, type RogueState } from '../../server/types.ts';
+import { ATTACKS, stormRatePerSecond, type AttackId, type RogueAction, type RogueState } from '../../server/types.ts';
 
 const INTENSITIES = [1, 2, 4, 8];
 
@@ -110,6 +110,9 @@ function AttackRow({ s, act }: { s: RogueState; act: (a: RogueAction) => void })
                 {fired > 0 && <span className="attack-count mono">{fired}</span>}
               </label>
               <p className="attack-blurb">{a.blurb}</p>
+              {a.id === 'reconnectStorm' && (
+                <p className="attack-rate mono">≈ {stormRatePerSecond(s.config.intensity)} new connections/sec at ×{s.config.intensity}</p>
+              )}
               <button className="btn btn-xs" onClick={() => act({ type: 'burst', attack: a.id as AttackId })} disabled={a.id === 'reconnectStorm'}>
                 Fire once
               </button>

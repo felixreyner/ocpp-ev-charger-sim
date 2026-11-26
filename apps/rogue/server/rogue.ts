@@ -1,14 +1,43 @@
 import { EventEmitter } from 'node:events';
 import WebSocket from 'ws';
 import { versionLabel, type FrameKind, type LogEntry, type OcppVersion } from '@sim/ocpp';
-import { ATTACKS, HANDSHAKE_ATTACK_IDS, type AttackFlags, type AttackId, type HandshakeAttackId, type RogueConfig, type RogueState } from './types.ts';
+import {
+  ATTACKS,
+  HANDSHAKE_ATTACK_IDS,
+  STORM_BURST_PER_INTENSITY,
+  STORM_TICK_MS,
+  type AttackFlags,
+  type AttackId,
+  type HandshakeAttackId,
+  type RogueConfig,
+  type RogueState,
+} from './types.ts';
 import { HANDSHAKE_CASES, buildHandshakeRequest, sendHandshakeProbe } from './handshake.ts';
 
 const HANDSHAKE_SET = new Set<AttackId>(HANDSHAKE_ATTACK_IDS);
 
 const RECONNECT_DELAY_MS = 4000;
-const STORM_DELAY_MS = 600;
 const MAX_LOGS = 600;
+
+/**
+ * Reconnect-storm tuning. The storm's goal is a NEW-connection rate (new
+ * WebSocket handshakes per second) that blows past a WAF/gateway connection-rate
+ * limit — the "connections per second" knob FortiWeb enforces on `/ocpp/*`.
+ *
+ * It is deliberately decoupled from the node's own data socket: that stays up
+ * while a swarm of short-lived sockets hammers the handshake back-to-back. Each
+ * tick opens a burst of parallel sockets, each of which is slammed shut the
+ * instant it connects, so the per-second connection count scales cleanly:
+ *
+ *   rate ≈ (1000 / STORM_TICK_MS) × STORM_BURST_PER_INTENSITY × intensity
+ *        = 10 × 2 × intensity ≈ 20 × intensity new connections/sec
+ *
+ * intensity ×1 ≈ 20/sec, ×8 ≈ 160/sec — both far above a 2/sec limit, so the
+ * demo trips FortiWeb at any intensity.
+ *
+ * STORM_TICK_MS and STORM_BURST_PER_INTENSITY live in ./types.ts so the GUI can
+ * share the same rate model.
+ */
 
 /** Vendor/model strings that make the node obvious on the CSMS dashboard. */
 const IDENTITY = {
@@ -61,6 +90,13 @@ export class RogueCharger extends EventEmitter {
   private timers = new Map<AttackId, NodeJS.Timeout>();
   private reconnectTimer: NodeJS.Timeout | null = null;
   private stormTimer: NodeJS.Timeout | null = null;
+  /** Live throwaway sockets the reconnect storm has opened but not yet dropped. */
+  private stormSockets = new Set<WebSocket>();
+  /** Monotonic id suffix so each storm handshake is a distinct, valid charge-point id. */
+  private stormSeq = 0;
+  /** Throttle for the storm's one-line-per-second summary log. */
+  private stormLogAt = 0;
+  private stormOpensSinceLog = 0;
 
   private stats: RogueState['stats'] = {
     framesSent: 0,
@@ -135,7 +171,9 @@ export class RogueCharger extends EventEmitter {
       this.connState = { ...this.connState, state: 'disconnected', connectedAt: null };
       this.emitState();
       if (this.wantConnected) {
-        const delay = this.forceReconnect ? 0 : this.armed && this.attacks.reconnectStorm ? STORM_DELAY_MS : RECONNECT_DELAY_MS;
+        // The storm runs on its own throwaway sockets now, so the data socket
+        // just uses the normal backoff (or reconnects at once when retargeting).
+        const delay = this.forceReconnect ? 0 : RECONNECT_DELAY_MS;
         this.forceReconnect = false;
         this.reconnectTimer = setTimeout(() => this.openSocket(), delay);
       }
@@ -223,9 +261,10 @@ export class RogueCharger extends EventEmitter {
     for (const meta of ATTACKS) {
       if (!this.attacks[meta.id]) continue;
       if (meta.id === 'reconnectStorm') {
-        // Slam the socket shut on a cadence; `close` restarts it fast.
-        const period = Math.max(400, meta.everyMs / this.config.intensity);
-        this.stormTimer = setInterval(() => this.ws?.close(4000, 'rogue reconnect storm'), period);
+        // Swarm the gateway with short-lived handshakes, back-to-back and in
+        // parallel bursts, so the new-connection rate blows past a WAF's
+        // connections-per-second limit. The data socket is left alone.
+        this.stormTimer = setInterval(() => this.fireReconnectStorm(), STORM_TICK_MS);
         continue;
       }
       const period = Math.max(40, meta.everyMs / this.config.intensity);
@@ -241,6 +280,88 @@ export class RogueCharger extends EventEmitter {
     this.timers.clear();
     if (this.stormTimer) clearInterval(this.stormTimer);
     this.stormTimer = null;
+    for (const ws of this.stormSockets) {
+      // Graceful close so the CSMS never sees a torn frame (it has no error
+      // handler of its own); terminate only if the socket is already dead.
+      try {
+        ws.close(1000, 'rogue reconnect storm stopped');
+      } catch {
+        try {
+          ws.terminate();
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+    this.stormSockets.clear();
+  }
+
+  // ------------------------------------------------------------- reconnect storm
+
+  /** One tick: open a parallel burst of new sockets, sized by intensity. */
+  private fireReconnectStorm() {
+    const burst = STORM_BURST_PER_INTENSITY * this.config.intensity;
+    for (let i = 0; i < burst; i++) this.openStormSocket();
+  }
+
+  /**
+   * Open a single throwaway handshake to the CSMS and slam it shut the instant it
+   * connects. Each uses a distinct (still spec-valid) charge-point id so the
+   * swarm doesn't fight over the node's own session — what matters to a
+   * connection-rate limit is the handshake count, and every one of these is a
+   * fresh `GET /ocpp/{id}`.
+   */
+  private openStormSocket() {
+    // Keep the id valid for the gateway OpenAPI pattern (≤48 chars, no spaces),
+    // so these handshakes are accepted (and thus counted) rather than rejected.
+    const base = this.config.chargePointId.slice(0, 40);
+    const id = `${base}-S${(this.stormSeq++).toString(36)}`;
+    const url = `${this.config.csmsUrl.replace(/\/+$/, '')}/${encodeURIComponent(id)}`;
+
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(url, [this.config.version]);
+    } catch {
+      return;
+    }
+    this.stormSockets.add(ws);
+    // Swallow the inevitable errors from connections we hang up on mid-flight —
+    // an unhandled 'error' on a ws would crash the process.
+    ws.on('error', () => this.stormSockets.delete(ws));
+    ws.on('close', () => this.stormSockets.delete(ws));
+    ws.on('open', () => {
+      // A new connection landed — exactly what a connection-rate limit counts.
+      this.connState = { ...this.connState, socketOpens: this.connState.socketOpens + 1 };
+      this.stats.attacksFired.reconnectStorm++;
+      this.stats.lastAttack = { id: 'reconnectStorm', at: Date.now() };
+      this.stormOpensSinceLog++;
+      this.maybeLogStorm();
+      // Hang up gracefully so the CSMS sees a clean close, not a torn socket;
+      // the handshake already counted toward the connection-rate limit.
+      try {
+        ws.close(1000, 'rogue reconnect storm');
+      } catch {
+        /* already closing */
+      }
+    });
+  }
+
+  /** Emit at most one storm summary (and state refresh) per second. */
+  private maybeLogStorm() {
+    const t = Date.now();
+    if (t - this.stormLogAt < 1000) return;
+    const n = this.stormOpensSinceLog;
+    this.stormOpensSinceLog = 0;
+    this.stormLogAt = t;
+    this.pushLog({
+      dir: 'out',
+      kind: 'CALL',
+      messageId: 'storm',
+      action: `reconnect storm — ${n} new connections in the last second`,
+      payload: { newConnectionsPerSecond: n, intensity: this.config.intensity },
+      raw: `⚡ reconnect storm → ${n} new WebSocket handshakes/sec (intensity ×${this.config.intensity})`,
+    });
+    this.emitState();
   }
 
   // ------------------------------------------------------------------ attacks

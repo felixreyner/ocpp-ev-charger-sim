@@ -288,6 +288,12 @@ code.err {
   color: var(--muted);
   flex: 1;
 }
+.attack-rate {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--danger, #f87171);
+}
 .btn-xs {
   align-self: flex-start;
   padding: 4px 10px;

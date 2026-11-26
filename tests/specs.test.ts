@@ -377,3 +377,47 @@ test('RogueCharger fires handshake probes and counts them in telemetry', async (
   assert.ok(stats.handshakeProbes >= expected, `handshake probes counted: ${stats.handshakeProbes}`);
   for (const id of HANDSHAKE_ATTACK_IDS) assert.ok(stats.attacksFired[id] >= 4, `${id} fired`);
 });
+
+/**
+ * The reconnect storm must open NEW connections far faster than a WAF's
+ * connections-per-second limit (felix set FortiWeb to 2/sec and it slipped
+ * through). We measure the real new-connection rate the storm drives against a
+ * live CSMS and assert it clears 2/sec by a wide margin even at the lowest
+ * intensity, and that the shared rate model matches what actually happens.
+ */
+test('reconnect storm opens new connections far above a 2/sec limit', async () => {
+  const p = port++;
+  const central = new Central(p);
+  const flags = Object.fromEntries(ATTACKS.map((a) => [a.id, false])) as AttackFlags;
+  flags.reconnectStorm = true;
+  const rogue = new RogueCharger(
+    { csmsUrl: `ws://127.0.0.1:${p}/ocpp`, chargePointId: 'ROGUE-666', version: 'ocpp1.6', intensity: 1 },
+    flags,
+    true,
+  );
+  cleanups.push(() => rogue.shutdown(), () => central.close());
+
+  rogue.connect();
+  await until(() => rogue.state().connection.state === 'connected');
+
+  const baseOpens = rogue.state().connection.socketOpens;
+  const windowMs = 1000;
+  await wait(windowMs);
+  const opened = rogue.state().connection.socketOpens - baseOpens;
+  const perSecond = (opened * 1000) / windowMs;
+
+  // Expected ≈ stormRatePerSecond(1) = 20/sec; be generous for CI jitter but
+  // demand a clear, order-of-magnitude margin over a 2/sec limit.
+  assert.ok(perSecond > 2, `storm must exceed a 2/sec limit (saw ${perSecond}/sec)`);
+  assert.ok(perSecond >= 10, `storm should reach ~20/sec at ×1 (saw ${perSecond}/sec)`);
+  // socketOpens only ticks on a completed WS handshake, so every one above is a
+  // connection the CSMS actually accepted.
+  assert.ok(rogue.state().stats.attacksFired.reconnectStorm >= 10, 'storm connections counted in telemetry');
+
+  // Disarming must stop the swarm promptly.
+  rogue.setArmed(false);
+  await wait(300);
+  const afterDisarm = rogue.state().connection.socketOpens;
+  await wait(300);
+  assert.equal(rogue.state().connection.socketOpens, afterDisarm, 'storm stops when disarmed');
+});

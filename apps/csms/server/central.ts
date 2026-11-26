@@ -90,6 +90,19 @@ export class Central extends EventEmitter {
       charger.lastSeen = Date.now();
       rpc.receive(data.toString());
     });
+    // A rogue/abusive peer can send a malformed WebSocket frame (bad opcode,
+    // reserved bits set, a torn frame after an abrupt close). `ws` emits 'error'
+    // for those; without a handler it propagates as an uncaughtException and
+    // takes the whole CSMS process down — a trivial DoS. Drop the socket
+    // instead; legitimate chargers never hit this path.
+    ws.on('error', (err) => {
+      this.toast('error', `${id}: WebSocket protocol error — ${(err as Error)?.message ?? err}`);
+      try {
+        ws.close(1002, 'protocol error');
+      } catch {
+        /* already closing */
+      }
+    });
     ws.on('close', () => {
       rpc.close();
       if (this.sessions.get(id) === session) {

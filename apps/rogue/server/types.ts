@@ -73,7 +73,7 @@ export const ATTACKS: AttackMeta[] = [
   {
     id: 'reconnectStorm',
     label: 'Reconnect storm',
-    blurb: 'Opens and slams the WebSocket shut again every couple of seconds.',
+    blurb: 'Floods the gateway with back-to-back WebSocket handshakes — parallel bursts of short-lived connections, ~20 new connections/sec per intensity step (≈20/sec at ×1, ≈160/sec at ×8) to blow past a connections-per-second limit.',
     everyMs: 2200,
   },
   {
@@ -103,6 +103,17 @@ export const ATTACKS: AttackMeta[] = [
 ];
 
 export type AttackFlags = Record<AttackId, boolean>;
+
+/**
+ * Reconnect-storm rate model, shared by the engine (which drives it) and the GUI
+ * (which labels it). Each 100 ms tick opens `2 × intensity` parallel short-lived
+ * handshakes, so the new-connection rate is ~20 × intensity per second.
+ */
+export const STORM_TICK_MS = 100;
+export const STORM_BURST_PER_INTENSITY = 2;
+/** Approximate new connections/sec the reconnect storm produces at an intensity. */
+export const stormRatePerSecond = (intensity: number): number =>
+  Math.round((1000 / STORM_TICK_MS) * STORM_BURST_PER_INTENSITY * Math.min(8, Math.max(1, intensity || 1)));
 
 export interface RogueConfig {
   csmsUrl: string;
