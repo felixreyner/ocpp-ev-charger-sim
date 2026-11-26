@@ -9,11 +9,11 @@ export type AttackId =
   | 'bogusMeter'
   | 'flood'
   | 'reconnectStorm'
-  | 'replay'
   | 'oversized'
   | 'wrongType'
-  | 'invalidTx'
-  | 'ignoreCommands';
+  | 'sqlInjection'
+  | 'xssPayload'
+  | 'pathTraversal';
 
 export interface AttackMeta {
   id: AttackId;
@@ -50,12 +50,6 @@ export const ATTACKS: AttackMeta[] = [
     everyMs: 2200,
   },
   {
-    id: 'replay',
-    label: 'Replay & out-of-order',
-    blurb: 'Re-uses old messageIds and sends CALLRESULTs for requests that were never made.',
-    everyMs: 4000,
-  },
-  {
     id: 'oversized',
     label: 'Oversized payloads',
     blurb: 'Several-hundred-kilobyte string fields that blow past any sane length limit.',
@@ -68,16 +62,22 @@ export const ATTACKS: AttackMeta[] = [
     everyMs: 5000,
   },
   {
-    id: 'invalidTx',
-    label: 'Invalid transaction ids',
-    blurb: 'MeterValues and StopTransaction for transactions that were never started.',
+    id: 'sqlInjection',
+    label: 'SQL injection strings',
+    blurb: "SQL payloads (' OR 1=1--, UNION SELECT, DROP TABLE) smuggled into idTag / vendor fields.",
+    everyMs: 4000,
+  },
+  {
+    id: 'xssPayload',
+    label: 'XSS / script payloads',
+    blurb: '<script>, <img onerror> and javascript: URIs planted in idTag and vendor strings.',
     everyMs: 4500,
   },
   {
-    id: 'ignoreCommands',
-    label: 'Ignore CSMS commands',
-    blurb: 'Never answers Reset / remote commands, and keeps many CALLs in flight at once.',
-    everyMs: 0,
+    id: 'pathTraversal',
+    label: 'Path traversal strings',
+    blurb: '../../etc/passwd and encoded ..%2f sequences in idTag, vendor and transaction ids.',
+    everyMs: 4800,
   },
 ];
 
@@ -108,7 +108,8 @@ export interface RogueState {
   stats: {
     framesSent: number;
     attacksFired: Record<AttackId, number>;
-    commandsIgnored: number;
+    /** Frames carrying an injection signature (SQLi / XSS / path traversal). */
+    injectionProbes: number;
     lastAttack: { id: AttackId; at: number } | null;
   };
 }

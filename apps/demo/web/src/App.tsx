@@ -536,8 +536,8 @@ function RogueCard({ s, act, flash }: { s: RogueState; act: (a: RogueAction) => 
           <span>modes on</span>
         </div>
         <div>
-          <b className="mono">{s.stats.commandsIgnored}</b>
-          <span>cmds ignored</span>
+          <b className="mono">{s.stats.injectionProbes}</b>
+          <span>injection probes</span>
         </div>
         <div>
           <b className="mono">{c.socketOpens}</b>
@@ -568,7 +568,7 @@ function RogueCard({ s, act, flash }: { s: RogueState; act: (a: RogueAction) => 
           const on = s.attacks[a.id];
           const fired = s.stats.attacksFired[a.id] ?? 0;
           const hot = last?.id === a.id && Date.now() - last.at < 1500;
-          const oneShot = a.id !== 'reconnectStorm' && a.id !== 'ignoreCommands';
+          const oneShot = a.id !== 'reconnectStorm';
           return (
             <li key={a.id} className={`${on ? 'on' : ''} ${hot ? 'hot' : ''}`} title={a.blurb}>
               <label className="switch">
