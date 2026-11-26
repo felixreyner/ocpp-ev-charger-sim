@@ -216,6 +216,14 @@ export function App() {
                 <div className="stat-l">injection probes</div>
               </div>
               <div className="stat">
+                <div className="stat-n mono">{s.stats.handshakeProbes}</div>
+                <div className="stat-l">handshake probes</div>
+              </div>
+              <div className="stat">
+                <div className="stat-n mono">{s.stats.handshakeBlocked}</div>
+                <div className="stat-l">gateway blocked</div>
+              </div>
+              <div className="stat">
                 <div className="stat-n mono">{s.stats.lastAttack ? ago(s.stats.lastAttack.at) : '—'}</div>
                 <div className="stat-l">last probe</div>
               </div>

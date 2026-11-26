@@ -15,7 +15,16 @@ import { v16, v201, type LogEntry, type OcppVersion } from '@sim/ocpp';
 import { Central } from '../apps/csms/server/central.ts';
 import { Station } from '../apps/charger/server/station.ts';
 import { RogueCharger } from '../apps/rogue/server/rogue.ts';
-import { ATTACKS, type AttackFlags, type AttackId } from '../apps/rogue/server/types.ts';
+import { ATTACKS, HANDSHAKE_ATTACK_IDS, type AttackFlags, type AttackId } from '../apps/rogue/server/types.ts';
+import {
+  HANDSHAKE_CASES,
+  buildHandshakeRequest,
+  sendHandshakeProbe,
+  type HandshakeCase,
+  type HandshakeProbeResult,
+  type HandshakeRequest,
+  type HandshakeTarget,
+} from '../apps/rogue/server/handshake.ts';
 import { outputs, inboundFrameSchema, namedSchemas } from '../specs/src/build.ts';
 import { MAX_MESSAGE_BYTES, VERSIONS } from '../specs/src/schemas.ts';
 
@@ -262,3 +271,109 @@ for (const version of ['ocpp1.6', 'ocpp2.0.1'] as OcppVersion[]) {
     }
   });
 }
+
+/**
+ * Handshake-abuse modes. These break the gateway contract in
+ * `ocpp-csms-gateway.openapi.yaml` at the HTTP upgrade — the one layer FortiWeb's
+ * OpenAPI validation actually sees. We build a validator straight from the
+ * gateway spec (the same rules a WAF enforces) and check that every handshake
+ * case is rejected, while a conforming handshake is accepted.
+ */
+type GatewayCheck = (req: HandshakeRequest) => string | null;
+
+async function makeGatewayValidator(): Promise<GatewayCheck> {
+  const spec = (await SwaggerParser.parse(new URL('openapi/ocpp-csms-gateway.openapi.yaml', SPECS).pathname)) as {
+    paths: Record<string, { get?: { parameters: Array<{ in: string; name: string; required?: boolean; schema: object }> } }>;
+  };
+  const op = spec.paths['/ocpp/{chargePointId}'].get!;
+  const ajv = makeAjv();
+  let idCheck: (v: unknown) => boolean = () => true;
+  const headerChecks: Array<{ name: string; required: boolean; check: (v: unknown) => boolean }> = [];
+  for (const pr of op.parameters) {
+    if (pr.in === 'path' && pr.name === 'chargePointId') idCheck = ajv.compile(pr.schema) as (v: unknown) => boolean;
+    if (pr.in === 'header') headerChecks.push({ name: pr.name.toLowerCase(), required: !!pr.required, check: ajv.compile(pr.schema) as (v: unknown) => boolean });
+  }
+  return (req) => {
+    if (req.method !== 'GET') return `method ${req.method}`;
+    const segs = req.pathname.split('/').filter(Boolean);
+    if (segs.length !== 2 || segs[0] !== 'ocpp') return `path ${req.pathname}`;
+    if (!idCheck(segs[1])) return `id ${segs[1]}`;
+    if (req.query && req.query.length) return `query ${req.query}`;
+    if (req.body && req.body.length) return 'body';
+    const h = Object.fromEntries(Object.entries(req.headers).map(([k, v]) => [k.toLowerCase(), v]));
+    for (const hc of headerChecks) {
+      const val = h[hc.name];
+      if (val === undefined) {
+        if (hc.required) return `missing header ${hc.name}`;
+        continue;
+      }
+      if (!hc.check(val)) return `header ${hc.name}=${val}`;
+    }
+    return null;
+  };
+}
+
+const probe = (target: HandshakeTarget, kase: HandshakeCase) =>
+  new Promise<HandshakeProbeResult>((resolve) => sendHandshakeProbe(target, kase, resolve, 3000));
+
+test('every handshake-abuse case is rejected by the gateway OpenAPI contract', async () => {
+  const rejects = await makeGatewayValidator();
+  const target: HandshakeTarget = { csmsUrl: 'ws://localhost:9000/ocpp', chargePointId: 'CP-001', version: 'ocpp1.6' };
+
+  // Sanity: a conforming handshake passes the same validator.
+  const ok = buildHandshakeRequest(target, { variant: 'conforming', why: '' });
+  assert.equal(rejects(ok), null, 'a conforming handshake must pass the gateway contract');
+
+  // Every mode, every variant, must break at least one documented rule.
+  assert.deepEqual([...HANDSHAKE_ATTACK_IDS].sort(), Object.keys(HANDSHAKE_CASES).sort());
+  for (const id of HANDSHAKE_ATTACK_IDS) {
+    const cases = HANDSHAKE_CASES[id];
+    assert.ok(cases.length >= 3, `${id}: expected several variants`);
+    for (const kase of cases) {
+      const req = buildHandshakeRequest(target, kase);
+      const reason = rejects(req);
+      assert.ok(reason, `${id}/${kase.variant} (${req.requestLine}) should be rejected by the gateway`);
+    }
+  }
+});
+
+test('handshake probes reach the CSMS — showing the WAF gap the gateway spec closes', async () => {
+  const rejects = await makeGatewayValidator();
+  const p = port++;
+  const central = new Central(p);
+  cleanups.push(() => central.close());
+  const target: HandshakeTarget = { csmsUrl: `ws://127.0.0.1:${p}/ocpp`, chargePointId: 'CP-001', version: 'ocpp1.6' };
+
+  // A conforming upgrade is accepted (101) by the permissive CSMS with no WAF in front.
+  const good = await probe(target, { variant: 'conforming', why: '' });
+  assert.equal(good.accepted, true, `conforming handshake should connect, got ${good.status ?? good.error}`);
+
+  // Every abusive handshake actually reaches the CSMS and gets a response, and the
+  // gateway contract (what FortiWeb enforces) would reject it — the whole point of
+  // the mode: without the WAF the bare CSMS lets these through.
+  for (const id of HANDSHAKE_ATTACK_IDS) {
+    const kase = HANDSHAKE_CASES[id][0];
+    const res = await probe(target, kase);
+    assert.ok(res.status != null || res.error, `${id}/${kase.variant} should get a response or error`);
+    assert.ok(rejects(buildHandshakeRequest(target, kase)), `${id}/${kase.variant} must be rejected by the gateway contract`);
+  }
+});
+
+test('RogueCharger fires handshake probes and counts them in telemetry', async () => {
+  const p = port++;
+  const central = new Central(p);
+  const flags = Object.fromEntries(ATTACKS.map((a) => [a.id, false])) as AttackFlags;
+  const rogue = new RogueCharger({ csmsUrl: `ws://127.0.0.1:${p}/ocpp`, chargePointId: 'CP-001', version: 'ocpp1.6', intensity: 1 }, flags, false);
+  cleanups.push(() => rogue.shutdown(), () => central.close());
+  rogue.connect();
+  await until(() => rogue.state().connection.state === 'connected');
+
+  const before = rogue.state().stats.handshakeProbes;
+  for (const id of HANDSHAKE_ATTACK_IDS) for (let i = 0; i < 4; i++) rogue.burst(id);
+  const expected = before + HANDSHAKE_ATTACK_IDS.length * 4;
+  await until(() => rogue.state().stats.handshakeProbes >= expected, 8000);
+
+  const stats = rogue.state().stats;
+  assert.ok(stats.handshakeProbes >= expected, `handshake probes counted: ${stats.handshakeProbes}`);
+  for (const id of HANDSHAKE_ATTACK_IDS) assert.ok(stats.attacksFired[id] >= 4, `${id} fired`);
+});

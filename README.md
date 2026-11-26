@@ -68,7 +68,20 @@ The stack also includes a **rogue / faulty charger** — a deliberately misbehav
 
 Each misbehaviour is an independently toggleable **attack mode** (buttons in the GUI, or the `ROGUE_ATTACKS` env var). There's a master **Arm / Disarm** switch, a **×1–×8 intensity** dial, and a live log of every frame it fires plus the CSMS's reply.
 
-Every mode here is one FortiWeb can stop **over an established WebSocket** — by a rate/connection limit, the WebSocket frame/message size cap, or its attack-signature engine — so the demo shows traffic going *in* and the WAF turning it away.
+The modes come in two families, matching the two WAF layers. **Handshake-abuse** modes break the HTTP WebSocket upgrade itself — the one surface FortiWeb's OpenAPI gateway validation can see — so it rejects them *before the WebSocket exists*. **In-frame** modes ride an established WebSocket, where OpenAPI validation is blind, so a rate/connection limit, the frame/message size cap, or the attack-signature engine catches them instead.
+
+**Handshake-abuse modes** — each opens a throwaway upgrade request that violates [`specs/openapi/ocpp-csms-gateway.openapi.yaml`](specs/openapi/ocpp-csms-gateway.openapi.yaml), then logs whether the gateway let it through. These are the modes **FortiWeb's OpenAPI validation catches**:
+
+| Mode | What the gateway sees | Gateway rule it breaks |
+| --- | --- | --- |
+| `badHandshakePath` | Upgrade on `/admin`, `/ocpp` (no id), `/ocpp/{id}/extra`, or `/ocpp/..%2f..%2fadmin` | Only `GET /ocpp/{chargePointId}` is described |
+| `badChargePointId` | Id over 48 chars, with spaces, illegal symbols, non-ASCII, or empty | `chargePointId` pattern `^[A-Za-z0-9._~:\-]{1,48}$` |
+| `badSubprotocol` | `Sec-WebSocket-Protocol: ocpp9.9` / `chat` / empty, or the header missing | Subprotocol must be `ocpp1.6` / `ocpp2.0.1`, required |
+| `handshakeExtras` | A query string, an HTTP body, a `POST`/`DELETE` method, or a bad `Sec-WebSocket-Version` | No query, no body, GET only, version `13` |
+
+> The bare CSMS is permissive — it accepts most of these upgrades (the rogue log shows a red `gateway ACCEPTED … — WAF not in front!` line). That gap is the point: put FortiWeb in front with the gateway spec in reject-unknown mode and every one of them is denied at the edge. The GUI telemetry tracks **handshake probes** fired and how many came back **gateway blocked**.
+
+**In-frame modes** — FortiWeb can stop these only **over the established WebSocket**, by a rate/connection limit, the frame/message size cap, or its attack-signature engine:
 
 | Mode | What the CSMS sees | How a WAF catches it |
 | --- | --- | --- |
@@ -81,7 +94,7 @@ Every mode here is one FortiWeb can stop **over an established WebSocket** — b
 
 The three injection modes send **structurally valid** OCPP frames whose string fields carry an attack payload, so FortiWeb has to inspect the frame content with its attack-signature scan.
 
-> FortiWeb's OpenAPI / JSON-schema validation only applies to the HTTP handshake, not to messages inside the WebSocket. So modes that only a frame schema could catch (`malformed`, `bogusMeter`, `wrongType`) were removed from the menu, along with modes no WAF can see at all (a charger that ignores CSMS commands, or replays ids only the stateful CSMS recognizes). The CSMS itself still rejects junk frames with `FormationViolation` / `ProtocolError`.
+> OpenAPI / JSON-schema validation applies to the HTTP handshake, not to messages inside the WebSocket. That's why the handshake-abuse modes above are caught by OpenAPI validation, while the in-frame modes need rate limits, the size cap or signatures. Modes that only a frame schema could catch (`malformed`, `bogusMeter`, `wrongType`) were removed from the menu, along with modes no WAF can see at all (a charger that ignores CSMS commands, or replays ids only the stateful CSMS recognizes). The CSMS itself still rejects junk frames with `FormationViolation` / `ProtocolError`.
 
 ### Configuration
 
@@ -91,7 +104,7 @@ The three injection modes send **structurally valid** OCPP frames whose string f
 | `OCPP_VERSION` | `ocpp1.6` | `ocpp1.6` or `ocpp2.0.1` |
 | `ROGUE_ARMED` | `true` | Start misbehaving on boot (toggle live in the GUI) |
 | `ROGUE_INTENSITY` | `1` | `1`–`8`, scales how fast attacks fire |
-| `ROGUE_ATTACKS` | *(a broad default)* | Comma list of modes, or `all` / `none`. Unset = everything except the noisiest `flood` and `reconnectStorm` (so `oversized,sqlInjection,xssPayload,pathTraversal`) |
+| `ROGUE_ATTACKS` | *(a broad default)* | Comma list of modes, or `all` / `none`. Unset = all four handshake-abuse modes plus the in-frame modes except the noisiest `flood` and `reconnectStorm` (so `badHandshakePath,badChargePointId,badSubprotocol,handshakeExtras,oversized,sqlInjection,xssPayload,pathTraversal`) |
 
 To leave it out of a run entirely: `docker compose up --build csms charger`.
 

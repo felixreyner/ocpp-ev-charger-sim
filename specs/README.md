@@ -36,11 +36,31 @@ You can change these in `src/schemas.ts`: `MAX_CONNECTOR`, `MAX_READING`, `MAX_M
 
 These numbers come from `tests/specs.test.ts`. The test fires each attack 60 times from the real `RogueCharger` against a real CSMS, and checks the frames that arrive against the inbound schema.
 
-FortiWeb's OpenAPI / JSON-schema validation only covers the HTTP handshake, not
-messages inside the WebSocket. So the rogue menu keeps only modes FortiWeb can stop
-on the wire: rate/connection limits, the WebSocket frame/message size cap, and the
-attack-signature scan. The schema column shows what a validator one hop behind
-FortiWeb would add.
+The rogue menu has two families. **Handshake-abuse** modes break the HTTP upgrade
+itself, so **FortiWeb's OpenAPI gateway validation rejects them outright** — this
+is the layer `ocpp-csms-gateway.openapi.yaml` is for. **In-frame** modes ride an
+established WebSocket, where OpenAPI validation is blind, so FortiWeb needs
+rate/connection limits, the frame/message size cap, or the attack-signature scan;
+the schema column below shows what a validator one hop behind FortiWeb would add.
+
+### Handshake-abuse modes (caught by the gateway OpenAPI file)
+
+Each opens a throwaway upgrade request that violates `ocpp-csms-gateway.openapi.yaml`.
+`tests/specs.test.ts` builds a validator straight from that spec and checks every
+variant of every mode is rejected (and a conforming handshake accepted).
+
+| Rogue mode | Gateway rule it breaks |
+| --- | --- |
+| `badHandshakePath` | Path isn't `GET /ocpp/{chargePointId}` (`/admin`, `/ocpp` with no id, extra segments, `..%2f` traversal). |
+| `badChargePointId` | `chargePointId` outside `^[A-Za-z0-9._~:\-]{1,48}$`: too long, spaces, symbols, non-ASCII, empty. |
+| `badSubprotocol` | `Sec-WebSocket-Protocol` not `ocpp1.6`/`ocpp2.0.1`, or missing (the header is required here). |
+| `handshakeExtras` | A disallowed query string, request body, non-GET method, or bad `Sec-WebSocket-Version`. |
+
+The bare CSMS is permissive and accepts most of these; FortiWeb with this file in
+reject-unknown mode denies them before the WebSocket is established. That is the
+whole reason to load the gateway file.
+
+### In-frame modes (caught over the WebSocket)
 
 | Rogue mode | Stopped by the schema? | Stopped by the WAF via | Notes |
 | --- | --- | --- | --- |
