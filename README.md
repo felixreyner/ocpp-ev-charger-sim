@@ -92,6 +92,10 @@ Each misbehaviour is an independently toggleable **attack mode** (buttons in the
 
 To leave it out of a run entirely: `docker compose up --build csms charger`.
 
+### 🛡️ Blocking it with a WAF (OpenAPI / JSON Schema)
+
+[`specs/`](specs/README.md) has OpenAPI 3.0 and JSON Schema files that describe only legitimate OCPP traffic to the CSMS: the WebSocket handshake on `/ocpp/{chargePointId}` and every OCPP 1.6J / 2.0.1 frame, with strict types, enums, lengths and meter-value ranges. Load them into FortiWeb (or any schema validator) to reject the rogue node's malformed, oversized, wrong-type and impossible-meter frames. [specs/README.md](specs/README.md) shows how, and which attack modes still need rate limits or CSMS-side checks.
+
 ## OCPP in five minutes
 
 OCPP runs over a WebSocket that the **charger opens** to the CSMS. The URL ends with the charger's identity, and the version is negotiated with the `Sec-WebSocket-Protocol` header:
