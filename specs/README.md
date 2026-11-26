@@ -36,21 +36,20 @@ You can change these in `src/schemas.ts`: `MAX_CONNECTOR`, `MAX_READING`, `MAX_M
 
 These numbers come from `tests/specs.test.ts`. The test fires each attack 60 times from the real `RogueCharger` against a real CSMS, and checks the frames that arrive against the inbound schema.
 
-Every rogue mode in this build is one a WAF deployment can stop. The schema layer
-(these files) catches most; the rest fall to a rate limit or the attack-signature
-engine, noted in the last column.
+FortiWeb's OpenAPI / JSON-schema validation only covers the HTTP handshake, not
+messages inside the WebSocket. So the rogue menu keeps only modes FortiWeb can stop
+on the wire: rate/connection limits, the WebSocket frame/message size cap, and the
+attack-signature scan. The schema column shows what a validator one hop behind
+FortiWeb would add.
 
 | Rogue mode | Stopped by the schema? | Stopped by the WAF via | Notes |
 | --- | --- | --- | --- |
-| `malformed` | ✅ 100 % | schema | Non-JSON, wrong array shape, missing payload, wrong field types, non-string messageId. |
-| `bogusMeter` | ✅ 100 % | schema | −999999, −1, 1e9, 9.99e14 and 2⁵³ are all out of range. **The CSMS accepts these today**, so this is a real gain. |
-| `oversized` | ✅ 100 % | schema + size cap | `maxLength` 20/50 on boot fields. Also set a 16 KB WebSocket message limit so a 300 KB frame is cut off before parsing. |
-| `wrongType` | ✅ 100 % | schema | Message type must be 2, 3 or 4, and CALLERROR codes must come from the official list. |
+| `oversized` | ✅ 100 % | WS size cap | Every frame is ~300 KB, far over the 16 KB WebSocket max frame / message size, so FortiWeb drops it on the wire. The schema's `maxLength` 20/50 on boot fields also catches it. |
 | `flood` | ❌ valid frames | rate limit | Use rate limiting. In 2.0.1 mode the rogue sends 1.6-shaped StatusNotifications, and the schema rejects that half. |
 | `reconnectStorm` | ❌ (rate limit) | rate limit | Every reconnect is a new `GET /ocpp/{id}`, so an HTTP request rate limit on that URL stops it. |
-| `sqlInjection` | ⚠️ partly | schema **+ signatures** | Payloads ride in idTag / idToken / vendor fields. The hardened field patterns (printable-ASCII tokens, no spaces, short `maxLength`) reject the long or space-bearing variants (`' OR '1'='1' --`, `'; DROP TABLE …`); short pattern-legal ones (`admin'--`) are left for the SQLi signature set. |
-| `xssPayload` | ⚠️ partly | schema **+ signatures** | `<script>…</script>` and `<img … onerror=…>` are too long or contain spaces, so the schema drops them; compact ones (`<svg/onload=alert(1)>`, `javascript:alert(1)`) need the XSS signatures. |
-| `pathTraversal` | ⚠️ partly (1.6) / ❌ (2.0.1) | schema **+ signatures** | `../../../../etc/passwd` is 22 chars: it busts the 20-char 1.6 `idTag` but fits the 36-char 2.0.1 `idToken`, so in 2.0.1 only the traversal signatures (`../`, `..%2f`, `%2e%2e`) catch it. |
+| `sqlInjection` | ⚠️ partly | signatures | Payloads ride in idTag / idToken / vendor fields. The hardened field patterns (printable-ASCII tokens, no spaces, short `maxLength`) reject the long or space-bearing variants (`' OR '1'='1' --`, `'; DROP TABLE …`); short pattern-legal ones (`admin'--`) are left for the SQLi signature set. |
+| `xssPayload` | ⚠️ partly | signatures | `<script>…</script>` and `<img … onerror=…>` are too long or contain spaces, so the schema drops them; compact ones (`<svg/onload=alert(1)>`, `javascript:alert(1)`) need the XSS signatures. |
+| `pathTraversal` | ⚠️ partly (1.6) / ❌ (2.0.1) | signatures | `../../../../etc/passwd` is 22 chars: it busts the 20-char 1.6 `idTag` but fits the 36-char 2.0.1 `idToken`, so in 2.0.1 only the traversal signatures (`../`, `..%2f`, `%2e%2e`) catch it. |
 
 The three injection modes are the reason to enable the **attack-signature scan**, not
 just OpenAPI/JSON-schema validation: they send structurally valid OCPP frames, so a
@@ -58,11 +57,11 @@ validator that only checks shape and field ranges passes the short, pattern-lega
 payloads. `tests/specs.test.ts` checks both halves — every injection frame carries a
 detectable signature, and the schema alone never catches all of them.
 
-Modes that **no WAF can see** — a charger that ignores CSMS commands (missing traffic),
-or replays a valid messageId / transaction id that only the stateful CSMS can recognize —
-were removed from the rogue menu in this build, because there is nothing for a WAF to
-demonstrate against them. The CSMS still defends against them with call timeouts and
-transaction state.
+Modes that **only a frame schema** could catch (`malformed`, `bogusMeter`, `wrongType`)
+were removed from the rogue menu, since FortiWeb can't apply the schema inside the
+WebSocket. Modes **no WAF can see** (a charger that ignores CSMS commands, or replays
+ids only the stateful CSMS recognizes) were removed earlier. The CSMS still defends
+against all of them with frame parsing, call timeouts and transaction state.
 
 The rogue's boot frames are well formed, so **no schema can tell `ROGUE-666` apart from a real station by shape.** To keep unknown stations out entirely, allowlist known `chargePointId`s, or better, turn on OCPP security profile 2 or 3 (TLS plus Basic auth or client certificates).
 

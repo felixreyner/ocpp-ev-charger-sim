@@ -186,13 +186,17 @@ for (const version of ['ocpp1.6', 'ocpp2.0.1'] as OcppVersion[]) {
     };
 
     const blockedShare: Partial<Record<AttackId, number>> = {};
-    for (const attack of ['malformed', 'bogusMeter', 'oversized', 'wrongType', 'flood'] as AttackId[]) {
+    const sizes: Partial<Record<AttackId, number[]>> = {};
+    for (const attack of ['oversized', 'flood'] as AttackId[]) {
       const frames = await capture(attack);
       blockedShare[attack] = frames.filter((raw) => !okFrame(raw)).length / frames.length;
+      sizes[attack] = frames.map((raw) => Buffer.byteLength(raw));
     }
 
-    // Fully caught by the schema (malformed structure, impossible numbers, over-length, bad message type).
-    for (const a of ['malformed', 'bogusMeter', 'oversized', 'wrongType'] as AttackId[]) assert.equal(blockedShare[a], 1, `${a}: ${blockedShare[a]}`);
+    // Oversized frames are also far over the 16 KB WebSocket frame/message cap a WAF
+    // enforces on the wire (no schema needed), and the schema rejects them too.
+    assert.equal(blockedShare.oversized, 1, `oversized: ${blockedShare.oversized}`);
+    assert.ok(sizes.oversized!.every((n) => n > MAX_MESSAGE_BYTES), 'every oversized frame busts the WS size cap');
     // Floods are valid Heartbeats/StatusNotifications: only rate limiting stops them. (In 2.0.1 mode the
     // rogue sends 1.6-shaped StatusNotifications, so that half of the flood is rejected by the schema.)
     if (version === 'ocpp1.6') assert.equal(blockedShare.flood, 0);

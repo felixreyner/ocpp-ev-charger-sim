@@ -66,8 +66,6 @@ export class RogueCharger extends EventEmitter {
     lastAttack: null,
   };
 
-  /** Transaction id the bogus-meter mode reports against (never actually started). */
-  private phantomTxId = 90000;
 
   constructor(config: RogueConfig, attacks: AttackFlags, armed: boolean) {
     super();
@@ -245,16 +243,10 @@ export class RogueCharger extends EventEmitter {
   private runAttack(id: AttackId) {
     if (this.connState.state !== 'connected' || !this.ws) return;
     switch (id) {
-      case 'malformed':
-        return this.attackMalformed();
-      case 'bogusMeter':
-        return this.attackBogusMeter();
       case 'flood':
         return this.attackFlood();
       case 'oversized':
         return this.attackOversized();
-      case 'wrongType':
-        return this.attackWrongType();
       case 'sqlInjection':
         return this.attackInjection('sqlInjection');
       case 'xssPayload':
@@ -271,46 +263,6 @@ export class RogueCharger extends EventEmitter {
     this.stats.lastAttack = { id, at: Date.now() };
   }
 
-  private attackMalformed() {
-    this.note('malformed');
-    const variants = [
-      () => '}{ not json at all 🙂',
-      () => '[2,"only-three-elements"]',
-      () => JSON.stringify([2, this.id(), 'Heartbeat']), // CALL missing payload
-      () => JSON.stringify([2, this.id(), 'BootNotification', { chargePointVendor: 123 }]), // wrong type
-      () => JSON.stringify([2, this.id(), 'StatusNotification', { connectorId: 'not-a-number', status: 'Teapot' }]),
-      () => JSON.stringify([2, 42, 'Heartbeat', {}]), // messageId not a string
-      () => JSON.stringify({ hello: 'this is an object, not an array' }),
-    ];
-    this.sendRaw(pick(variants)(), { kind: 'CALL', action: 'Malformed' });
-  }
-
-  private attackBogusMeter() {
-    this.note('bogusMeter');
-    const impossible = pick([-999999, 9.99e14, Number.MAX_SAFE_INTEGER, -1, 1e9]);
-    if (this.config.version === 'ocpp1.6') {
-      this.sendCall('MeterValues', {
-        connectorId: 1,
-        transactionId: this.phantomTxId,
-        meterValue: [
-          {
-            timestamp: now(),
-            sampledValue: [{ value: String(impossible), measurand: 'Energy.Active.Import.Register', unit: 'Wh' }],
-          },
-        ],
-      });
-    } else {
-      this.sendCall('TransactionEvent', {
-        eventType: 'Updated',
-        timestamp: now(),
-        triggerReason: 'MeterValuePeriodic',
-        seqNo: rand(5),
-        transactionInfo: { transactionId: String(this.phantomTxId) },
-        meterValue: [{ timestamp: now(), sampledValue: [{ value: impossible, measurand: 'Energy.Active.Import.Register' }] }],
-      });
-    }
-  }
-
   private attackFlood() {
     this.note('flood');
     // A short burst each tick so the overall rate is high.
@@ -324,18 +276,6 @@ export class RogueCharger extends EventEmitter {
     this.note('oversized');
     const blob = 'A'.repeat(300_000);
     this.sendCall('BootNotification', buildBoot(this.config.version, { model: blob }));
-  }
-
-  private attackWrongType() {
-    this.note('wrongType');
-    const id = this.id();
-    const variants = [
-      () => JSON.stringify([9, id, 'Heartbeat', {}]), // unknown message type
-      () => JSON.stringify([0, id, {}]), // type 0
-      () => JSON.stringify([4, id, 'SomeError', 'a CALLERROR nobody asked for', {}]),
-      () => JSON.stringify(['2', id, 'Heartbeat', {}]), // type as string
-    ];
-    this.sendRaw(pick(variants)(), { kind: 'CALLERROR', action: 'WrongType', messageId: id });
   }
 
   /**

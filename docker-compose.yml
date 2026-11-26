@@ -54,7 +54,7 @@ services:
 
   # ⚠ Rogue / faulty charger. Deliberately misbehaves toward the CSMS to
   # exercise its robustness and to demo a WAF (FortiWeb) in front of it:
-  # malformed frames, floods, bogus meter values, oversized / wrong-type frames,
+  # floods, reconnect storms, oversized frames,
   # and injection payloads (SQLi / XSS / path traversal) in idTag / vendor fields.
   # This is a test node for your own local CSMS sandbox — its GUI is clearly
   # labelled and it registers as "ROGUE-666" on the dashboard.
@@ -73,7 +73,7 @@ services:
       ROGUE_INTENSITY: "1" # 1..8, scales how fast attacks fire
       # ROGUE_ATTACKS: comma list of modes, or "all" / "none". Unset = a broad
       # default (everything except the noisiest flood / reconnect-storm modes):
-      #   malformed,bogusMeter,oversized,wrongType,sqlInjection,xssPayload,pathTraversal
+      #   oversized,sqlInjection,xssPayload,pathTraversal
     ports:
       - "8082:8082" # rogue charger GUI
     depends_on:
