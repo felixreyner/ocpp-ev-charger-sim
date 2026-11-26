@@ -3,14 +3,17 @@ import type { LogEntry, OcppVersion } from '@sim/ocpp';
 /**
  * The attack modes a rogue / faulty charger can exhibit against a CSMS.
  * Every mode is independently toggleable (env var at boot, buttons in the GUI).
+ *
+ * Only modes a WAF can stop over an established WebSocket are kept: FortiWeb's
+ * OpenAPI/JSON-schema validation applies to the HTTP handshake only, not inside
+ * frames, so schema-only modes (malformed, bogus meter, wrong type) were removed.
+ * What remains is caught by rate/connection limits (flood, reconnectStorm), the
+ * WebSocket frame/message size cap (oversized) or signature scanning (injection).
  */
 export type AttackId =
-  | 'malformed'
-  | 'bogusMeter'
   | 'flood'
   | 'reconnectStorm'
   | 'oversized'
-  | 'wrongType'
   | 'sqlInjection'
   | 'xssPayload'
   | 'pathTraversal';
@@ -26,18 +29,6 @@ export interface AttackMeta {
 
 export const ATTACKS: AttackMeta[] = [
   {
-    id: 'malformed',
-    label: 'Malformed frames',
-    blurb: 'Non-JSON junk, wrong array shapes, missing required fields and bad field types.',
-    everyMs: 3000,
-  },
-  {
-    id: 'bogusMeter',
-    label: 'Impossible meter values',
-    blurb: 'Negative energy, terawatt readings and counters that run backwards.',
-    everyMs: 3500,
-  },
-  {
     id: 'flood',
     label: 'Message flood',
     blurb: 'Rapid-fire Heartbeat / StatusNotification bursts to stress the CSMS.',
@@ -52,14 +43,8 @@ export const ATTACKS: AttackMeta[] = [
   {
     id: 'oversized',
     label: 'Oversized payloads',
-    blurb: 'Several-hundred-kilobyte string fields that blow past any sane length limit.',
+    blurb: 'Several-hundred-kilobyte frames that blow past any WebSocket frame / message size cap.',
     everyMs: 6000,
-  },
-  {
-    id: 'wrongType',
-    label: 'Bad message types',
-    blurb: 'Frames with unknown message-type numbers and stray CALLERRORs.',
-    everyMs: 5000,
   },
   {
     id: 'sqlInjection',

@@ -68,23 +68,20 @@ The stack also includes a **rogue / faulty charger** — a deliberately misbehav
 
 Each misbehaviour is an independently toggleable **attack mode** (buttons in the GUI, or the `ROGUE_ATTACKS` env var). There's a master **Arm / Disarm** switch, a **×1–×8 intensity** dial, and a live log of every frame it fires plus the CSMS's reply.
 
-Every mode here is one a WAF such as FortiWeb can stop — by schema validation, a rate limit, or its attack-signature engine — so the demo shows traffic going *in* and the WAF (or the CSMS behind it) turning it away.
+Every mode here is one FortiWeb can stop **over an established WebSocket** — by a rate/connection limit, the WebSocket frame/message size cap, or its attack-signature engine — so the demo shows traffic going *in* and the WAF turning it away.
 
 | Mode | What the CSMS sees | How a WAF catches it |
 | --- | --- | --- |
-| `malformed` | Non-JSON junk, wrong array shapes, missing fields, bad field types | Schema / frame validation |
-| `bogusMeter` | Impossible meter values — negative energy, terawatt readings, counters running backwards | Schema number ranges |
 | `flood` | Rapid-fire Heartbeat / StatusNotification bursts | Rate / flood limit |
 | `reconnectStorm` | Opens and slams the WebSocket shut every couple of seconds | HTTP access-rate limit on the handshake |
-| `oversized` | Several-hundred-kilobyte string fields | `maxLength` + WebSocket message-size cap |
-| `wrongType` | Frames with unknown message-type numbers and stray CALLERRORs | Schema / frame validation |
-| `sqlInjection` | SQL payloads (`' OR 1=1--`, `UNION SELECT`, `DROP TABLE`) smuggled into idTag / vendor fields | Field patterns + SQLi signatures |
-| `xssPayload` | `<script>`, `<img onerror>` and `javascript:` URIs planted in idTag / vendor strings | Field patterns + XSS signatures |
-| `pathTraversal` | `../../etc/passwd` and encoded `..%2f` sequences in idTag, vendor and transaction ids | Field patterns + traversal signatures |
+| `oversized` | ~300 KB BootNotification frames | WebSocket max frame / message size (16 KB) |
+| `sqlInjection` | SQL payloads (`' OR 1=1--`, `UNION SELECT`, `DROP TABLE`) smuggled into idTag / vendor fields | SQLi signatures in the frame payload |
+| `xssPayload` | `<script>`, `<img onerror>` and `javascript:` URIs planted in idTag / vendor strings | XSS signatures in the frame payload |
+| `pathTraversal` | `../../etc/passwd` and encoded `..%2f` sequences in idTag, vendor and transaction ids | Traversal signatures in the frame payload |
 
-The three injection modes are the point of this build: they send **structurally valid** OCPP frames whose string fields carry an attack payload, so pure framing checks let them through and a WAF has to inspect the content. The hardened field patterns in [`specs/`](specs/README.md) reject the long or space-bearing payloads, and the attack-signature engine catches the short, pattern-legal ones that slip past the schema.
+The three injection modes send **structurally valid** OCPP frames whose string fields carry an attack payload, so FortiWeb has to inspect the frame content with its attack-signature scan.
 
-> Modes that a WAF *can't* see — a charger that simply ignores CSMS commands, or replays a valid id that only the stateful CSMS can recognize — were removed from this build, since there's nothing for FortiWeb to demonstrate against them. The CSMS still handles them (call timeouts, transaction state); they're just not rogue-menu buttons anymore.
+> FortiWeb's OpenAPI / JSON-schema validation only applies to the HTTP handshake, not to messages inside the WebSocket. So modes that only a frame schema could catch (`malformed`, `bogusMeter`, `wrongType`) were removed from the menu, along with modes no WAF can see at all (a charger that ignores CSMS commands, or replays ids only the stateful CSMS recognizes). The CSMS itself still rejects junk frames with `FormationViolation` / `ProtocolError`.
 
 ### Configuration
 
@@ -94,13 +91,13 @@ The three injection modes are the point of this build: they send **structurally 
 | `OCPP_VERSION` | `ocpp1.6` | `ocpp1.6` or `ocpp2.0.1` |
 | `ROGUE_ARMED` | `true` | Start misbehaving on boot (toggle live in the GUI) |
 | `ROGUE_INTENSITY` | `1` | `1`–`8`, scales how fast attacks fire |
-| `ROGUE_ATTACKS` | *(a broad default)* | Comma list of modes, or `all` / `none`. Unset = everything except the noisiest `flood` and `reconnectStorm` (so `malformed,bogusMeter,oversized,wrongType,sqlInjection,xssPayload,pathTraversal`) |
+| `ROGUE_ATTACKS` | *(a broad default)* | Comma list of modes, or `all` / `none`. Unset = everything except the noisiest `flood` and `reconnectStorm` (so `oversized,sqlInjection,xssPayload,pathTraversal`) |
 
 To leave it out of a run entirely: `docker compose up --build csms charger`.
 
 ### 🛡️ Blocking it with a WAF (OpenAPI / JSON Schema)
 
-[`specs/`](specs/README.md) has OpenAPI 3.0 and JSON Schema files that describe only legitimate OCPP traffic to the CSMS: the WebSocket handshake on `/ocpp/{chargePointId}` and every OCPP 1.6J / 2.0.1 frame, with strict types, enums, lengths and meter-value ranges. Load them into FortiWeb (or any schema validator) to reject the rogue node's malformed, oversized, wrong-type and impossible-meter frames, and turn on the attack-signature scan to catch the SQLi / XSS / path-traversal payloads. [specs/README.md](specs/README.md) shows how, and which modes rely on rate limits versus signatures.
+[`specs/`](specs/README.md) has OpenAPI 3.0 and JSON Schema files that describe only legitimate OCPP traffic to the CSMS: the WebSocket handshake on `/ocpp/{chargePointId}` and every OCPP 1.6J / 2.0.1 frame, with strict types, enums, lengths and meter-value ranges. Load the OpenAPI file into FortiWeb to lock down the handshake, set the WebSocket frame/message size cap, and turn on the attack-signature scan to catch the SQLi / XSS / path-traversal payloads. The frame-level JSON schemas are there for a validator one hop behind FortiWeb, since FortiWeb doesn't apply them inside the WebSocket. [specs/README.md](specs/README.md) shows how, and which modes rely on rate limits versus signatures.
 
 ## OCPP in five minutes
 
