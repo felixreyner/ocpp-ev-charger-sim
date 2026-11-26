@@ -4,19 +4,31 @@ import type { LogEntry, OcppVersion } from '@sim/ocpp';
  * The attack modes a rogue / faulty charger can exhibit against a CSMS.
  * Every mode is independently toggleable (env var at boot, buttons in the GUI).
  *
- * Only modes a WAF can stop over an established WebSocket are kept: FortiWeb's
- * OpenAPI/JSON-schema validation applies to the HTTP handshake only, not inside
- * frames, so schema-only modes (malformed, bogus meter, wrong type) were removed.
- * What remains is caught by rate/connection limits (flood, reconnectStorm), the
- * WebSocket frame/message size cap (oversized) or signature scanning (injection).
+ * Two families:
+ *  - Handshake-abuse modes break the gateway contract in
+ *    `specs/openapi/ocpp-csms-gateway.openapi.yaml` at the HTTP upgrade (wrong
+ *    path, bad id, bad subprotocol, disallowed method/query/body/header). These
+ *    are exactly what FortiWeb's OpenAPI gateway validation sees and rejects
+ *    before the WebSocket is established.
+ *  - In-frame modes ride an established WebSocket, so OpenAPI validation can't
+ *    see them; they are caught by rate/connection limits (flood, reconnectStorm),
+ *    the WebSocket frame/message size cap (oversized) or signature scanning
+ *    (injection). Schema-only modes (malformed, bogus meter, wrong type) were
+ *    removed, since FortiWeb can't apply a schema inside the WebSocket.
  */
+
+/** Modes that abuse the HTTP WebSocket handshake itself (gateway OpenAPI layer). */
+export const HANDSHAKE_ATTACK_IDS = ['badHandshakePath', 'badChargePointId', 'badSubprotocol', 'handshakeExtras'] as const;
+export type HandshakeAttackId = (typeof HANDSHAKE_ATTACK_IDS)[number];
+
 export type AttackId =
   | 'flood'
   | 'reconnectStorm'
   | 'oversized'
   | 'sqlInjection'
   | 'xssPayload'
-  | 'pathTraversal';
+  | 'pathTraversal'
+  | HandshakeAttackId;
 
 export interface AttackMeta {
   id: AttackId;
@@ -28,6 +40,30 @@ export interface AttackMeta {
 }
 
 export const ATTACKS: AttackMeta[] = [
+  {
+    id: 'badHandshakePath',
+    label: 'Bad handshake path',
+    blurb: 'Opens the WebSocket on a wrong path (/admin, /ocpp with no id, extra segments, ..%2f traversal) — rejected by the gateway OpenAPI path rule.',
+    everyMs: 7000,
+  },
+  {
+    id: 'badChargePointId',
+    label: 'Illegal charge-point id',
+    blurb: 'Handshake with an id that breaks the gateway pattern: over 48 chars, spaces, illegal symbols, non-ASCII or empty.',
+    everyMs: 7500,
+  },
+  {
+    id: 'badSubprotocol',
+    label: 'Wrong/missing subprotocol',
+    blurb: 'Offers a bogus Sec-WebSocket-Protocol (ocpp9.9, chat, empty) or none at all, instead of ocpp1.6 / ocpp2.0.1.',
+    everyMs: 8000,
+  },
+  {
+    id: 'handshakeExtras',
+    label: 'Disallowed upgrade extras',
+    blurb: 'Upgrade carrying a query string, an HTTP body, a non-GET method (POST/DELETE) or a bad Sec-WebSocket-Version the gateway spec forbids.',
+    everyMs: 8500,
+  },
   {
     id: 'flood',
     label: 'Message flood',
@@ -95,6 +131,10 @@ export interface RogueState {
     attacksFired: Record<AttackId, number>;
     /** Frames carrying an injection signature (SQLi / XSS / path traversal). */
     injectionProbes: number;
+    /** Malformed WebSocket handshakes attempted against the gateway. */
+    handshakeProbes: number;
+    /** Handshake probes the gateway/CSMS rejected (non-101). */
+    handshakeBlocked: number;
     lastAttack: { id: AttackId; at: number } | null;
   };
 }

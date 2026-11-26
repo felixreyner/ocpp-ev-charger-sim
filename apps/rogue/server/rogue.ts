@@ -1,7 +1,10 @@
 import { EventEmitter } from 'node:events';
 import WebSocket from 'ws';
 import { versionLabel, type FrameKind, type LogEntry, type OcppVersion } from '@sim/ocpp';
-import { ATTACKS, type AttackFlags, type AttackId, type RogueConfig, type RogueState } from './types.ts';
+import { ATTACKS, HANDSHAKE_ATTACK_IDS, type AttackFlags, type AttackId, type HandshakeAttackId, type RogueConfig, type RogueState } from './types.ts';
+import { HANDSHAKE_CASES, buildHandshakeRequest, sendHandshakeProbe } from './handshake.ts';
+
+const HANDSHAKE_SET = new Set<AttackId>(HANDSHAKE_ATTACK_IDS);
 
 const RECONNECT_DELAY_MS = 4000;
 const STORM_DELAY_MS = 600;
@@ -63,6 +66,8 @@ export class RogueCharger extends EventEmitter {
     framesSent: 0,
     attacksFired: blankCounts(),
     injectionProbes: 0,
+    handshakeProbes: 0,
+    handshakeBlocked: 0,
     lastAttack: null,
   };
 
@@ -241,6 +246,9 @@ export class RogueCharger extends EventEmitter {
   // ------------------------------------------------------------------ attacks
 
   private runAttack(id: AttackId) {
+    // Handshake-abuse modes open their own throwaway upgrade request; they do
+    // NOT need (or use) the established data socket.
+    if (HANDSHAKE_SET.has(id)) return this.runHandshakeProbe(id as HandshakeAttackId);
     if (this.connState.state !== 'connected' || !this.ws) return;
     switch (id) {
       case 'flood':
@@ -323,6 +331,46 @@ export class RogueCharger extends EventEmitter {
         this.sendCall('BootNotification', buildBoot('ocpp2.0.1', { vendor: payload }));
       }
     }
+  }
+
+  /**
+   * Handshake-abuse probe: open a single malformed WebSocket upgrade to the
+   * gateway that breaks `ocpp-csms-gateway.openapi.yaml`, and report whether the
+   * gateway rejected it. This is the layer FortiWeb's OpenAPI validation covers,
+   * so with the WAF in front the probe comes back blocked; without it the
+   * permissive CSMS usually answers 101 (accepted), which we flag loudly.
+   */
+  private runHandshakeProbe(id: HandshakeAttackId) {
+    this.note(id);
+    this.stats.handshakeProbes++;
+    const target = { csmsUrl: this.config.csmsUrl, chargePointId: this.config.chargePointId, version: this.config.version };
+    const kase = pick(HANDSHAKE_CASES[id]);
+    const req = buildHandshakeRequest(target, kase);
+    this.pushLog({
+      dir: 'out',
+      kind: 'CALL',
+      messageId: kase.variant,
+      action: `WS handshake ✗ ${kase.why}`,
+      payload: { variant: kase.variant, why: kase.why, subprotocol: req.subprotocol },
+      raw: `→ ${req.requestLine}  [Sec-WebSocket-Protocol: ${req.subprotocol ?? '(none)'}]`,
+    });
+    sendHandshakeProbe(target, kase, (res) => {
+      const blocked = !res.accepted;
+      if (blocked) this.stats.handshakeBlocked++;
+      this.pushLog({
+        dir: 'in',
+        kind: blocked ? 'CALLERROR' : 'CALLRESULT',
+        messageId: kase.variant,
+        action: blocked
+          ? `gateway blocked handshake (${res.status ?? res.error ?? 'no response'})`
+          : `gateway ACCEPTED handshake (${res.status}) — WAF not in front!`,
+        payload: res,
+        raw: JSON.stringify(res),
+        errorCode: blocked ? String(res.status ?? 'NO_RESPONSE') : undefined,
+        errorDescription: blocked ? kase.why : undefined,
+      });
+      this.emitState();
+    });
   }
 
   // ------------------------------------------------------------------ incoming
