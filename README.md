@@ -86,7 +86,7 @@ The modes come in two families, matching the two WAF layers. **Handshake-abuse**
 | Mode | What the CSMS sees | How a WAF catches it |
 | --- | --- | --- |
 | `flood` | Rapid-fire Heartbeat / StatusNotification bursts | Rate / flood limit |
-| `reconnectStorm` | Opens and slams the WebSocket shut every couple of seconds | HTTP access-rate limit on the handshake |
+| `reconnectStorm` | A swarm of back-to-back WebSocket handshakes — ≈20 new connections/sec per intensity step (≈20/sec at ×1, ≈160/sec at ×8) | Connections-per-second / HTTP access-rate limit on the handshake |
 | `oversized` | ~300 KB BootNotification frames | WebSocket max frame / message size (16 KB) |
 | `sqlInjection` | SQL payloads (`' OR 1=1--`, `UNION SELECT`, `DROP TABLE`) smuggled into idTag / vendor fields | SQLi signatures in the frame payload |
 | `xssPayload` | `<script>`, `<img onerror>` and `javascript:` URIs planted in idTag / vendor strings | XSS signatures in the frame payload |

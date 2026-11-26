@@ -66,7 +66,7 @@ whole reason to load the gateway file.
 | --- | --- | --- | --- |
 | `oversized` | ✅ 100 % | WS size cap | Every frame is ~300 KB, far over the 16 KB WebSocket max frame / message size, so FortiWeb drops it on the wire. The schema's `maxLength` 20/50 on boot fields also catches it. |
 | `flood` | ❌ valid frames | rate limit | Use rate limiting. In 2.0.1 mode the rogue sends 1.6-shaped StatusNotifications, and the schema rejects that half. |
-| `reconnectStorm` | ❌ (rate limit) | rate limit | Every reconnect is a new `GET /ocpp/{id}`, so an HTTP request rate limit on that URL stops it. |
+| `reconnectStorm` | ❌ (rate limit) | connection-rate limit | A swarm of short-lived handshakes — parallel bursts sized by intensity, ≈20 new connections/sec per step (≈20/sec at ×1, ≈160/sec at ×8). Every one is a fresh `GET /ocpp/{id}`, so a connections-per-second limit on that URL stops it. Set FortiWeb's threshold below the storm's rate (e.g. a few/sec) and well above your real fleet's reconnect rate. |
 | `sqlInjection` | ⚠️ partly | signatures | Payloads ride in idTag / idToken / vendor fields. The hardened field patterns (printable-ASCII tokens, no spaces, short `maxLength`) reject the long or space-bearing variants (`' OR '1'='1' --`, `'; DROP TABLE …`); short pattern-legal ones (`admin'--`) are left for the SQLi signature set. |
 | `xssPayload` | ⚠️ partly | signatures | `<script>…</script>` and `<img … onerror=…>` are too long or contain spaces, so the schema drops them; compact ones (`<svg/onload=alert(1)>`, `javascript:alert(1)`) need the XSS signatures. |
 | `pathTraversal` | ⚠️ partly (1.6) / ❌ (2.0.1) | signatures | `../../../../etc/passwd` is 22 chars: it busts the 20-char 1.6 `idTag` but fits the 36-char 2.0.1 `idToken`, so in 2.0.1 only the traversal signatures (`../`, `..%2f`, `%2e%2e`) catch it. |
@@ -97,7 +97,7 @@ Menu names below are from the FortiWeb 7.x admin guide. They move around a littl
    - Result: `/foo`, `/ocpp`, `/ocpp/a/b/c`, POST requests, query strings, ids with spaces or over 48 characters, and handshakes without `ocpp1.6`/`ocpp2.0.1` are all denied before they reach the CSMS.
 3. **WebSocket security (the frames).** Allow WebSocket in the protection profile and create a WebSocket security rule. Set max frame size and max message size to **16384**, allow text frames only, and turn on the attack-signature scan. Chargers don't send an `Origin` header, so don't require one.
 4. **Message content.** If your FortiWeb firmware can validate WebSocket message bodies against a JSON schema, attach `json-schema/<subprotocol>-inbound-frame.schema.json`. If it can't (check your version's docs), enforce the schemas one hop later, as below.
-5. **Rate limits.** Under *DoS Protection*, add an HTTP access limit or flood rule on `/ocpp/*` per source IP, for example a few handshakes per minute. That stops `reconnectStorm`.
+5. **Rate limits.** Under *DoS Protection*, add an HTTP access / connection-rate limit on `/ocpp/*` per source IP. The reconnect storm opens ≈20 new connections/sec at intensity ×1 and up to ≈160/sec at ×8, so set the threshold a few connections/sec — above a real fleet's reconnect rate but far below the storm — to stop `reconnectStorm`. (A 2/sec limit works, but leave headroom; the storm clears it by 10× even at the lowest intensity.)
 6. **Optional allowlist.** Use a URL access rule that only allows `/ocpp/<known-id>` for your real stations.
 
 ### Enforcing the frame schemas without WAF support
